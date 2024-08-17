@@ -1,0 +1,9 @@
+[package]
+name = "pumps_rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+futures = "0.3.30"
+pin-project-lite = "0.2.14"
