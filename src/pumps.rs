@@ -1,15 +1,8 @@
 use std::future::Future;
 
-use futures::{
-    channel::mpsc::{Receiver, Sender},
-    stream::{FuturesOrdered, FuturesUnordered},
-    SinkExt, Stream, StreamExt,
-};
+use futures::{channel::mpsc::Receiver, SinkExt, Stream, StreamExt};
 
-use crate::{
-    execute_futures::{Concurrency, ExecuteFuturesPump},
-    map::MapPump,
-};
+use crate::{concurency::Concurrency, map::MapPump};
 
 pub trait Pump<In, Out> {
     fn spawn(self, input_receiver: Receiver<In>) -> Receiver<Out>;
@@ -62,21 +55,17 @@ impl<Out> Pipeline<Out> {
         }
     }
 
-    pub fn map<F, POut>(self, map_fn: F) -> Pipeline<POut>
+    pub fn map<F, POut, PFut>(self, map_fn: F, concurrency: Concurrency) -> Pipeline<POut>
     where
-        F: Fn(Out) -> POut + Send + 'static,
+        F: Fn(Out) -> PFut + Send + 'static,
+        PFut: Future<Output = POut> + Send + 'static,
         POut: Send + 'static,
         Out: Send + 'static,
     {
-        self.pump(MapPump { map_fn })
-    }
-
-    pub fn execute_futures<Pout>(self, concurrency: Concurrency) -> Pipeline<Pout>
-    where
-        Out: Future<Output = Pout> + Send + 'static,
-        Pout: Send + 'static,
-    {
-        self.pump(ExecuteFuturesPump { concurrency })
+        self.pump(MapPump {
+            map_fn,
+            concurrency,
+        })
     }
 }
 
@@ -96,8 +85,7 @@ mod tests {
         let (mut input_sender, input_receiver) = futures::channel::mpsc::channel(100);
 
         let pipeline = Pipeline::new(input_receiver)
-            .map(async_job)
-            .execute_futures(Concurrency::concurrent(2).backpressure(100));
+            .map(async_job, Concurrency::concurrent(2).backpressure(100));
 
         let mut output_receiver = pipeline.output_receiver;
         input_sender.send(1).await.unwrap();
@@ -117,9 +105,8 @@ mod tests {
     async fn test_into_pipeline() {
         let stream = stream::iter(vec![1, 2, 3]);
 
-        let pipeline = Pipeline::from(stream)
-            .map(async_job)
-            .execute_futures(Concurrency::concurrent(2).backpressure(100));
+        let pipeline =
+            Pipeline::from(stream).map(async_job, Concurrency::concurrent(2).backpressure(100));
 
         let mut output_receiver = pipeline.output_receiver;
 
