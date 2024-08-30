@@ -1,6 +1,6 @@
 use std::future::Future;
 
-use futures::{channel::mpsc::Receiver, FutureExt, SinkExt, StreamExt};
+use futures::{channel::mpsc::Receiver, SinkExt, StreamExt};
 
 use crate::{
     concurency::{Concurrency, FuturesContainer},
@@ -31,22 +31,19 @@ where
 
             let mut input_receiver = input_receiver.fuse();
             loop {
-                if in_progress.len() < max_concurrency {
-                    futures::select_biased! {
-                        input = input_receiver.select_next_some() => {
-                            let fut = (self.map_fn)(input);
-                            in_progress.push_back(fut);
-                        },
-                        output = in_progress.select_next_some().fuse() => {
-                            if let Some(output) = output {
-                                output_sender.send(output).await.unwrap();
+                tokio::select! {
+                    biased;
+
+                    input = input_receiver.select_next_some(), if in_progress.len() < max_concurrency  => {
+                        let fut = (self.map_fn)(input);
+                        in_progress.push_back(fut);
+                    },
+                    output = in_progress.select_next_some() => {
+                        if let Some(output) = output {
+                            if let Err(_e) =  output_sender.send(output).await {
+                                break;
                             }
                         }
-                    }
-                } else {
-                    let output = in_progress.select_next_some().await;
-                    if let Some(output) = output {
-                        output_sender.send(output).await.unwrap();
                     }
                 }
             }

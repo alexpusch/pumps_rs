@@ -26,24 +26,24 @@ where
 
         let max_concurrency = self.concurrency.concurrency;
 
-        tokio::spawn(async move {
+        let h = tokio::spawn(async move {
             let mut in_progress = FuturesContainer::new(self.concurrency.preserve_order);
 
             let mut input_receiver = input_receiver.fuse();
             loop {
-                if in_progress.len() < max_concurrency {
-                    futures::select_biased! {
-                        input = input_receiver.select_next_some() => {
-                            let fut = (self.map_fn)(input);
-                            in_progress.push_back(fut);
-                        },
-                        output = in_progress.select_next_some() => {
-                            output_sender.send(output).await.unwrap();
+                tokio::select! {
+                    biased;
+
+                    input = input_receiver.select_next_some(), if in_progress.len() < max_concurrency  => {
+
+                        let fut = (self.map_fn)(input);
+                        in_progress.push_back(fut);
+                    },
+                    output = in_progress.select_next_some() => {
+                        if let Err(_e) =  output_sender.send(output).await {
+                            break;
                         }
                     }
-                } else {
-                    let output = in_progress.select_next_some().await;
-                    output_sender.send(output).await.unwrap();
                 }
             }
         });
