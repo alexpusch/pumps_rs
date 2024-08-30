@@ -7,15 +7,15 @@ use crate::{
     pumps::Pump,
 };
 
-pub struct MapPump<F> {
+pub struct FIlterMapPump<F> {
     pub(crate) map_fn: F,
     pub(crate) concurrency: Concurrency,
 }
 
-impl<In, Out, F, Fut> Pump<In, Out> for MapPump<F>
+impl<In, Out, F, Fut> Pump<In, Out> for FIlterMapPump<F>
 where
     F: Fn(In) -> Fut + Send + 'static,
-    Fut: Future<Output = Out> + Send,
+    Fut: Future<Output = Option<Out>> + Send,
     In: Send + 'static,
     Out: Send + 'static,
 {
@@ -37,13 +37,17 @@ where
                             let fut = (self.map_fn)(input);
                             in_progress.push_back(fut);
                         },
-                        output = in_progress.select_next_some() => {
-                            output_sender.send(output).await.unwrap();
+                        output = in_progress.select_next_some().fuse() => {
+                            if let Some(output) = output {
+                                output_sender.send(output).await.unwrap();
+                            }
                         }
                     }
                 } else {
                     let output = in_progress.select_next_some().await;
-                    output_sender.send(output).await.unwrap();
+                    if let Some(output) = output {
+                        output_sender.send(output).await.unwrap();
+                    }
                 }
             }
         });
@@ -65,9 +69,9 @@ mod tests {
 
         let timings = FutureTimings::new();
 
-        let pump = MapPump {
+        let pump = FIlterMapPump {
             concurrency: Concurrency::serial(),
-            map_fn: timings.get_tracked_fn(|value| value.id),
+            map_fn: timings.get_tracked_fn(|value| (value.id % 2 == 1).then_some(value.id)),
         };
 
         let output_receiver = pump.spawn(input_receiver);
@@ -79,7 +83,7 @@ mod tests {
         input_sender.send(TestValue::new(3, 10)).await.unwrap();
 
         assert_eq!(output_receiver.next().await, Some(1));
-        assert_eq!(output_receiver.next().await, Some(2));
+        // assert_eq!(output_receiver.next().await, Some(2));
         assert_eq!(output_receiver.next().await, Some(3));
 
         assert!(timings.run_after(3, 2).await);
@@ -96,9 +100,9 @@ mod tests {
 
         let timings = FutureTimings::new();
 
-        let pump = MapPump {
+        let pump = FIlterMapPump {
             concurrency: Concurrency::concurrent(2),
-            map_fn: timings.get_tracked_fn(|value| value.id),
+            map_fn: timings.get_tracked_fn(|value| Some(value.id)),
         };
 
         let output_receiver = pump.spawn(input_receiver);
@@ -129,9 +133,9 @@ mod tests {
 
         let timings = FutureTimings::new();
 
-        let pump = MapPump {
+        let pump = FIlterMapPump {
             concurrency: Concurrency::concurrent(2).preserve_order(),
-            map_fn: timings.get_tracked_fn(|value| value.id),
+            map_fn: timings.get_tracked_fn(|value| Some(value.id)),
         };
 
         let output_receiver = pump.spawn(input_receiver);
@@ -161,9 +165,9 @@ mod tests {
 
         let timings = FutureTimings::new();
 
-        let pump = MapPump {
+        let pump = FIlterMapPump {
             concurrency: Concurrency::concurrent(2).backpressure(1),
-            map_fn: timings.get_tracked_fn(|value| value.id),
+            map_fn: timings.get_tracked_fn(|value| Some(value.id)),
         };
 
         let output_receiver = pump.spawn(input_receiver);

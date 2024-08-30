@@ -1,16 +1,10 @@
-use core::time;
-use std::{
-    collections::HashMap,
-    fmt::{self, Formatter},
-    sync::Arc,
-    time::{Instant, SystemTime},
-};
+use std::{collections::HashMap, sync::Arc, time::SystemTime};
 
 use futures::{future::BoxFuture, FutureExt};
 use tokio::sync::Mutex;
 
 pub struct TestValue {
-    id: i32,
+    pub id: i32,
     duration: u64,
 }
 
@@ -83,21 +77,30 @@ impl FutureTimings {
         }
     }
 
-    pub fn get_tracked_fn(&self) -> impl Fn(TestValue) -> BoxFuture<'static, i32> {
+    pub fn get_tracked_fn<F, FOut>(
+        &self,
+        inner_fn: F,
+    ) -> impl Fn(TestValue) -> BoxFuture<'static, FOut>
+    where
+        F: Fn(&TestValue) -> FOut + Send + Sync + 'static,
+        FOut: Send + 'static,
+    {
         let this = self.clone();
 
         move |value| {
-            let processed = this.clone();
+            let timings = this.clone();
+            let output = (inner_fn)(&value);
 
             (async move {
-                processed.set_polled(value.id).await;
+                timings.set_polled(value.id).await;
 
+                // TODO - do not rely on time for testing
                 tokio::time::sleep(std::time::Duration::from_millis(10 * value.duration as u64))
                     .await;
 
-                processed.set_completed(value.id).await;
+                timings.set_completed(value.id).await;
 
-                value.id
+                output
             })
             .boxed()
         }
@@ -114,8 +117,6 @@ impl FutureTimings {
             .min()
             .unwrap()
             .clone();
-
-        dbg!(min_start);
 
         for (id, timing) in timings.iter() {
             match timing {
