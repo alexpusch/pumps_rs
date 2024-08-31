@@ -1,6 +1,7 @@
 use std::future::Future;
 
-use futures::{channel::mpsc::Receiver, FutureExt, SinkExt, StreamExt};
+use futures::{channel::mpsc::Receiver, SinkExt, StreamExt};
+use tokio::task::JoinHandle;
 
 use crate::{
     concurency::{Concurrency, FuturesContainer},
@@ -19,36 +20,37 @@ where
     In: Send + 'static,
     Out: Send + 'static,
 {
-    fn spawn(self, input_receiver: Receiver<In>) -> Receiver<Out> {
+    fn spawn(self, mut input_receiver: Receiver<In>) -> (Receiver<Out>, JoinHandle<()>) {
         let (mut output_sender, output_receiver) = futures::channel::mpsc::channel(
             self.concurrency.concurrency + self.concurrency.back_pressure,
         );
 
         let max_concurrency = self.concurrency.concurrency;
 
-        let h = tokio::spawn(async move {
+        let join_handle = tokio::spawn(async move {
             let mut in_progress = FuturesContainer::new(self.concurrency.preserve_order);
 
-            let mut input_receiver = input_receiver.fuse();
             loop {
+                let in_progress_len = in_progress.len();
+
                 tokio::select! {
                     biased;
 
-                    input = input_receiver.select_next_some(), if in_progress.len() < max_concurrency  => {
-
+                    Some(input) = input_receiver.next(), if in_progress_len < max_concurrency => {
                         let fut = (self.map_fn)(input);
                         in_progress.push_back(fut);
                     },
-                    output = in_progress.select_next_some() => {
-                        if let Err(_e) =  output_sender.send(output).await {
+                    Some(output) = in_progress.next(), if in_progress_len > 0 => {
+                        if let Err(_e) = output_sender.send(output).await {
                             break;
                         }
-                    }
+                    },
+                    else => break
                 }
             }
         });
 
-        output_receiver
+        (output_receiver, join_handle)
     }
 }
 
@@ -70,7 +72,7 @@ mod tests {
             map_fn: timings.get_tracked_fn(|value| value.id),
         };
 
-        let output_receiver = pump.spawn(input_receiver);
+        let (output_receiver, _) = pump.spawn(input_receiver);
 
         let mut output_receiver = output_receiver;
 
@@ -101,7 +103,7 @@ mod tests {
             map_fn: timings.get_tracked_fn(|value| value.id),
         };
 
-        let output_receiver = pump.spawn(input_receiver);
+        let (output_receiver, _) = pump.spawn(input_receiver);
 
         let mut output_receiver = output_receiver;
 
@@ -134,7 +136,7 @@ mod tests {
             map_fn: timings.get_tracked_fn(|value| value.id),
         };
 
-        let output_receiver = pump.spawn(input_receiver);
+        let (output_receiver, _) = pump.spawn(input_receiver);
 
         let mut output_receiver = output_receiver;
 
@@ -166,7 +168,7 @@ mod tests {
             map_fn: timings.get_tracked_fn(|value| value.id),
         };
 
-        let output_receiver = pump.spawn(input_receiver);
+        let (output_receiver, _) = pump.spawn(input_receiver);
 
         let mut output_receiver = output_receiver;
 

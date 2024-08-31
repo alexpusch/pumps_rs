@@ -1,11 +1,6 @@
-use std::{
-    future::Future,
-    pin::Pin,
-    task::{Context, Poll},
-};
+use std::future::Future;
 
 use futures::{
-    future::FusedFuture,
     stream::{FuturesOrdered, FuturesUnordered},
     StreamExt,
 };
@@ -86,44 +81,10 @@ where
         }
     }
 
-    pub(crate) fn select_next_some(&mut self) -> SelectNextSome<'_, T> {
+    pub(crate) async fn next(&mut self) -> Option<T::Output> {
         match self {
-            Self::Ordered(futures) => SelectNextSome::Ordered(futures.select_next_some()),
-            Self::Unordered(futures) => SelectNextSome::Unordered(futures.select_next_some()),
-        }
-    }
-}
-
-pub(crate) enum SelectNextSome<'a, T>
-where
-    T: Future,
-{
-    Ordered(futures::stream::SelectNextSome<'a, FuturesOrdered<T>>),
-    Unordered(futures::stream::SelectNextSome<'a, FuturesUnordered<T>>),
-}
-
-impl<T> Future for SelectNextSome<'_, T>
-where
-    T: Future,
-{
-    type Output = T::Output;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match &mut *self {
-            Self::Ordered(select_next_some) => Pin::new(select_next_some).poll(cx),
-            Self::Unordered(select_next_some) => Pin::new(select_next_some).poll(cx),
-        }
-    }
-}
-
-impl<T> FusedFuture for SelectNextSome<'_, T>
-where
-    T: Future,
-{
-    fn is_terminated(&self) -> bool {
-        match self {
-            Self::Ordered(select_next_some) => select_next_some.is_terminated(),
-            Self::Unordered(select_next_some) => select_next_some.is_terminated(),
+            Self::Ordered(futures) => futures.next().await,
+            Self::Unordered(futures) => futures.next().await,
         }
     }
 }

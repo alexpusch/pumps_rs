@@ -1,55 +1,59 @@
 use std::future::Future;
 
 use futures::{channel::mpsc::Receiver, SinkExt, StreamExt};
+use tokio::task::JoinHandle;
 
 use crate::{
     concurency::{Concurrency, FuturesContainer},
     pumps::Pump,
 };
 
-pub struct FIlterMapPump<F> {
+pub struct FilterMapPump<F> {
     pub(crate) map_fn: F,
     pub(crate) concurrency: Concurrency,
 }
 
-impl<In, Out, F, Fut> Pump<In, Out> for FIlterMapPump<F>
+impl<In, Out, F, Fut> Pump<In, Out> for FilterMapPump<F>
 where
     F: Fn(In) -> Fut + Send + 'static,
     Fut: Future<Output = Option<Out>> + Send,
     In: Send + 'static,
     Out: Send + 'static,
 {
-    fn spawn(self, input_receiver: Receiver<In>) -> Receiver<Out> {
+    fn spawn(self, mut input_receiver: Receiver<In>) -> (Receiver<Out>, JoinHandle<()>) {
         let (mut output_sender, output_receiver) = futures::channel::mpsc::channel(
             self.concurrency.concurrency + self.concurrency.back_pressure,
         );
 
         let max_concurrency = self.concurrency.concurrency;
 
-        tokio::spawn(async move {
+        let join_handle = tokio::spawn(async move {
             let mut in_progress = FuturesContainer::new(self.concurrency.preserve_order);
 
-            let mut input_receiver = input_receiver.fuse();
             loop {
+                let in_progress_len = in_progress.len();
+
                 tokio::select! {
                     biased;
 
-                    input = input_receiver.select_next_some(), if in_progress.len() < max_concurrency  => {
+                    Some(input) = input_receiver.next(), if in_progress_len < max_concurrency => {
                         let fut = (self.map_fn)(input);
                         in_progress.push_back(fut);
                     },
-                    output = in_progress.select_next_some() => {
+                    Some(output) = in_progress.next(), if in_progress_len > 0 => {
                         if let Some(output) = output {
                             if let Err(_e) =  output_sender.send(output).await {
                                 break;
                             }
                         }
-                    }
+                    },
+                    else => break
+
                 }
             }
         });
 
-        output_receiver
+        (output_receiver, join_handle)
     }
 }
 
@@ -66,12 +70,12 @@ mod tests {
 
         let timings = FutureTimings::new();
 
-        let pump = FIlterMapPump {
+        let pump = FilterMapPump {
             concurrency: Concurrency::serial(),
             map_fn: timings.get_tracked_fn(|value| (value.id % 2 == 1).then_some(value.id)),
         };
 
-        let output_receiver = pump.spawn(input_receiver);
+        let (output_receiver, _) = pump.spawn(input_receiver);
 
         let mut output_receiver = output_receiver;
 
@@ -97,12 +101,12 @@ mod tests {
 
         let timings = FutureTimings::new();
 
-        let pump = FIlterMapPump {
+        let pump = FilterMapPump {
             concurrency: Concurrency::concurrent(2),
             map_fn: timings.get_tracked_fn(|value| Some(value.id)),
         };
 
-        let output_receiver = pump.spawn(input_receiver);
+        let (output_receiver, _) = pump.spawn(input_receiver);
 
         let mut output_receiver = output_receiver;
 
@@ -130,12 +134,12 @@ mod tests {
 
         let timings = FutureTimings::new();
 
-        let pump = FIlterMapPump {
+        let pump = FilterMapPump {
             concurrency: Concurrency::concurrent(2).preserve_order(),
             map_fn: timings.get_tracked_fn(|value| Some(value.id)),
         };
 
-        let output_receiver = pump.spawn(input_receiver);
+        let (output_receiver, _) = pump.spawn(input_receiver);
 
         let mut output_receiver = output_receiver;
 
@@ -162,12 +166,12 @@ mod tests {
 
         let timings = FutureTimings::new();
 
-        let pump = FIlterMapPump {
+        let pump = FilterMapPump {
             concurrency: Concurrency::concurrent(2).backpressure(1),
             map_fn: timings.get_tracked_fn(|value| Some(value.id)),
         };
 
-        let output_receiver = pump.spawn(input_receiver);
+        let (output_receiver, _) = pump.spawn(input_receiver);
 
         let mut output_receiver = output_receiver;
 
