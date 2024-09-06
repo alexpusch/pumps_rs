@@ -7,7 +7,7 @@ use futures::{
 
 pub struct Concurrency {
     pub concurrency: usize,
-    pub back_pressure: usize,
+    pub backpressure: usize,
     pub preserve_order: bool,
 }
 
@@ -15,7 +15,7 @@ impl Concurrency {
     pub fn concurrent(concurrency: usize) -> Self {
         Self {
             concurrency,
-            back_pressure: 64,
+            backpressure: concurrency,
             preserve_order: false,
         }
     }
@@ -23,26 +23,24 @@ impl Concurrency {
     pub fn serial() -> Self {
         Self {
             concurrency: 1,
-            back_pressure: 64,
+            backpressure: 1,
             preserve_order: false,
         }
     }
 
-    /// How many futurs can be stored in memory before a consumer takes them from the output channel
-    /// (default = 0)
-    pub fn backpressure(self, back_pressure: usize) -> Self {
+    /// How many futures can be stored in memory before a consumer takes them from the output channel
+    /// (default = concurrency)
+    pub fn backpressure(self, backpressure: usize) -> Self {
         Self {
-            concurrency: self.concurrency,
-            back_pressure,
-            preserve_order: self.preserve_order,
+            backpressure,
+            ..self
         }
     }
 
     pub fn preserve_order(self) -> Self {
         Self {
-            concurrency: self.concurrency,
-            back_pressure: self.back_pressure,
             preserve_order: true,
+            ..self
         }
     }
 }

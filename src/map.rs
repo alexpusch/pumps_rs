@@ -24,7 +24,7 @@ where
 {
     fn spawn(self, mut input_receiver: Receiver<In>) -> (Receiver<Out>, JoinHandle<()>) {
         let (output_sender, output_receiver) =
-            mpsc::channel(self.concurrency.concurrency + self.concurrency.back_pressure);
+            mpsc::channel(self.concurrency.concurrency + self.concurrency.backpressure);
 
         let max_concurrency = self.concurrency.concurrency;
 
