@@ -1,10 +1,10 @@
 use std::future::Future;
 
-use futures::{
-    channel::mpsc::Receiver, future::BoxFuture, stream::FuturesUnordered, FutureExt, SinkExt,
-    Stream, StreamExt,
+use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, Stream, StreamExt};
+use tokio::{
+    sync::mpsc::{self, Receiver},
+    task::{JoinError, JoinHandle},
 };
-use tokio::task::{JoinError, JoinHandle};
 
 use crate::{concurency::Concurrency, filter_map::FilterMapPump, map::MapPump};
 
@@ -31,7 +31,7 @@ where
     Out: Send + 'static,
 {
     pub fn from_stream(stream: impl Stream<Item = Out> + Send + 'static) -> Self {
-        let (mut output_sender, output_receiver) = futures::channel::mpsc::channel(1);
+        let (output_sender, output_receiver) = mpsc::channel(1);
 
         tokio::spawn(async move {
             tokio::pin!(stream);
@@ -51,7 +51,7 @@ where
         I: IntoIterator<Item = Out> + Send + 'static,
         <I as IntoIterator>::IntoIter: std::marker::Send,
     {
-        let (mut output_sender, output_receiver) = futures::channel::mpsc::channel(1);
+        let (output_sender, output_receiver) = mpsc::channel(1);
 
         tokio::spawn(async move {
             let mut iter = iter.into_iter();
@@ -131,7 +131,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use futures::stream;
+    use futures::{stream, SinkExt};
 
     use super::*;
 
@@ -149,7 +149,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_pipeline() {
-        let (mut input_sender, input_receiver) = futures::channel::mpsc::channel(100);
+        let (input_sender, input_receiver) = mpsc::channel(100);
 
         let pipeline = Pipeline::from(input_receiver)
             .map(async_job, Concurrency::concurrent(2).backpressure(100))
@@ -161,18 +161,18 @@ mod tests {
         input_sender.send(3).await.unwrap();
         input_sender.send(4).await.unwrap();
 
-        assert_eq!(output_receiver.next().await, Some(2));
-        assert_eq!(output_receiver.next().await, Some(4));
+        assert_eq!(output_receiver.recv().await, Some(2));
+        assert_eq!(output_receiver.recv().await, Some(4));
 
         drop(input_sender);
-        assert_eq!(output_receiver.next().await, None);
+        assert_eq!(output_receiver.recv().await, None);
 
         assert!(matches!(join_handle.await, Ok(())));
     }
 
     #[tokio::test]
     async fn panic_handling() {
-        let (mut input_sender, input_receiver) = futures::channel::mpsc::channel(100);
+        let (input_sender, input_receiver) = mpsc::channel(100);
 
         let (mut output_receiver, join_handle) = Pipeline::from(input_receiver)
             .map(async_job, Concurrency::concurrent(2).backpressure(100))
@@ -192,9 +192,9 @@ mod tests {
         input_sender.send(2).await.unwrap();
         input_sender.send(3).await.unwrap();
 
-        assert_eq!(output_receiver.next().await, Some(1));
-        assert_eq!(output_receiver.next().await, None);
-        assert_eq!(output_receiver.next().await, None);
+        assert_eq!(output_receiver.recv().await, Some(1));
+        assert_eq!(output_receiver.recv().await, None);
+        assert_eq!(output_receiver.recv().await, None);
 
         let res = join_handle.await;
 
@@ -209,11 +209,31 @@ mod tests {
 
         let mut output_receiver = pipeline.output_receiver;
 
-        assert_eq!(output_receiver.next().await, Some(1));
-        assert_eq!(output_receiver.next().await, Some(2));
-        assert_eq!(output_receiver.next().await, Some(3));
+        assert_eq!(output_receiver.recv().await, Some(1));
+        assert_eq!(output_receiver.recv().await, Some(2));
+        assert_eq!(output_receiver.recv().await, Some(3));
 
-        assert_eq!(output_receiver.next().await, None);
+        assert_eq!(output_receiver.recv().await, None);
+    }
+
+    #[tokio::test]
+    async fn test_from_futures_channel() {
+        let (mut sender, receiver) = futures::channel::mpsc::channel(100);
+
+        sender.send(1).await.unwrap();
+        sender.send(2).await.unwrap();
+        sender.send(3).await.unwrap();
+
+        let pipeline = Pipeline::from_stream(receiver).map(async_job, Concurrency::serial());
+
+        let mut output_receiver = pipeline.output_receiver;
+        assert_eq!(output_receiver.recv().await, Some(1));
+        assert_eq!(output_receiver.recv().await, Some(2));
+        assert_eq!(output_receiver.recv().await, Some(3));
+
+        drop(sender);
+
+        assert_eq!(output_receiver.recv().await, None);
     }
 
     #[tokio::test]
@@ -224,10 +244,10 @@ mod tests {
 
         let mut output_receiver = pipeline.output_receiver;
 
-        assert_eq!(output_receiver.next().await, Some(1));
-        assert_eq!(output_receiver.next().await, Some(2));
-        assert_eq!(output_receiver.next().await, Some(3));
+        assert_eq!(output_receiver.recv().await, Some(1));
+        assert_eq!(output_receiver.recv().await, Some(2));
+        assert_eq!(output_receiver.recv().await, Some(3));
 
-        assert_eq!(output_receiver.next().await, None);
+        assert_eq!(output_receiver.recv().await, None);
     }
 }

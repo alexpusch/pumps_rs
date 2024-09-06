@@ -1,7 +1,9 @@
 use std::future::Future;
 
-use futures::{channel::mpsc::Receiver, SinkExt, StreamExt};
-use tokio::task::JoinHandle;
+use tokio::{
+    sync::mpsc::{self, Receiver},
+    task::JoinHandle,
+};
 
 use crate::{
     concurency::{Concurrency, FuturesContainer},
@@ -21,9 +23,8 @@ where
     Out: Send + 'static,
 {
     fn spawn(self, mut input_receiver: Receiver<In>) -> (Receiver<Out>, JoinHandle<()>) {
-        let (mut output_sender, output_receiver) = futures::channel::mpsc::channel(
-            self.concurrency.concurrency + self.concurrency.back_pressure,
-        );
+        let (output_sender, output_receiver) =
+            mpsc::channel(self.concurrency.concurrency + self.concurrency.back_pressure);
 
         let max_concurrency = self.concurrency.concurrency;
 
@@ -36,7 +37,7 @@ where
                 tokio::select! {
                     biased;
 
-                    Some(input) = input_receiver.next(), if in_progress_len < max_concurrency => {
+                    Some(input) = input_receiver.recv(), if in_progress_len < max_concurrency => {
                         let fut = (self.map_fn)(input);
                         in_progress.push_back(fut);
                     },
@@ -63,8 +64,7 @@ mod tests {
 
     #[tokio::test]
     async fn serial() {
-        let (mut input_sender, input_receiver) = futures::channel::mpsc::channel(100);
-
+        let (input_sender, input_receiver) = mpsc::channel(100);
         let timings = FutureTimings::new();
 
         let pump = MapPump {
@@ -80,21 +80,21 @@ mod tests {
         input_sender.send(TestValue::new(2, 20)).await.unwrap();
         input_sender.send(TestValue::new(3, 10)).await.unwrap();
 
-        assert_eq!(output_receiver.next().await, Some(1));
-        assert_eq!(output_receiver.next().await, Some(2));
-        assert_eq!(output_receiver.next().await, Some(3));
+        assert_eq!(output_receiver.recv().await, Some(1));
+        assert_eq!(output_receiver.recv().await, Some(2));
+        assert_eq!(output_receiver.recv().await, Some(3));
 
         assert!(timings.run_after(3, 2).await);
         assert!(timings.run_after(2, 1).await);
 
         drop(input_sender);
 
-        assert_eq!(output_receiver.next().await, None);
+        assert_eq!(output_receiver.recv().await, None);
     }
 
     #[tokio::test]
     async fn concurrency_2_unordered() {
-        let (mut input_sender, input_receiver) = futures::channel::mpsc::channel(100);
+        let (input_sender, input_receiver) = mpsc::channel(100);
 
         let timings = FutureTimings::new();
 
@@ -112,9 +112,9 @@ mod tests {
         input_sender.send(TestValue::new(2, 10)).await.unwrap();
         input_sender.send(TestValue::new(3, 10)).await.unwrap();
 
-        assert_eq!(output_receiver.next().await, Some(2));
-        assert_eq!(output_receiver.next().await, Some(1));
-        assert_eq!(output_receiver.next().await, Some(3));
+        assert_eq!(output_receiver.recv().await, Some(2));
+        assert_eq!(output_receiver.recv().await, Some(1));
+        assert_eq!(output_receiver.recv().await, Some(3));
 
         assert!(timings.run_in_parallel(1, 2).await);
         assert!(timings.run_in_parallel(1, 3).await);
@@ -122,12 +122,12 @@ mod tests {
 
         drop(input_sender);
 
-        assert_eq!(output_receiver.next().await, None);
+        assert_eq!(output_receiver.recv().await, None);
     }
 
     #[tokio::test]
     async fn concurrency_2_ordered() {
-        let (mut input_sender, input_receiver) = futures::channel::mpsc::channel(100);
+        let (input_sender, input_receiver) = mpsc::channel(100);
 
         let timings = FutureTimings::new();
 
@@ -145,21 +145,21 @@ mod tests {
         input_sender.send(TestValue::new(2, 10)).await.unwrap();
         input_sender.send(TestValue::new(3, 10)).await.unwrap();
 
-        assert_eq!(output_receiver.next().await, Some(1));
-        assert_eq!(output_receiver.next().await, Some(2));
-        assert_eq!(output_receiver.next().await, Some(3));
+        assert_eq!(output_receiver.recv().await, Some(1));
+        assert_eq!(output_receiver.recv().await, Some(2));
+        assert_eq!(output_receiver.recv().await, Some(3));
 
         assert!(timings.run_in_parallel(1, 2).await);
         assert!(timings.run_after(3, 2).await);
 
         drop(input_sender);
 
-        assert_eq!(output_receiver.next().await, None);
+        assert_eq!(output_receiver.recv().await, None);
     }
 
     #[tokio::test]
     async fn concurrency_2_ordered_backpressure_3() {
-        let (mut input_sender, input_receiver) = futures::channel::mpsc::channel(100);
+        let (input_sender, input_receiver) = mpsc::channel(100);
 
         let timings = FutureTimings::new();
 
@@ -177,9 +177,9 @@ mod tests {
         input_sender.send(TestValue::new(2, 10)).await.unwrap();
         input_sender.send(TestValue::new(3, 10)).await.unwrap();
 
-        assert_eq!(output_receiver.next().await, Some(2));
-        assert_eq!(output_receiver.next().await, Some(1));
-        assert_eq!(output_receiver.next().await, Some(3));
+        assert_eq!(output_receiver.recv().await, Some(2));
+        assert_eq!(output_receiver.recv().await, Some(1));
+        assert_eq!(output_receiver.recv().await, Some(3));
 
         timings.debug().await;
 
@@ -190,6 +190,6 @@ mod tests {
 
         drop(input_sender);
 
-        assert_eq!(output_receiver.next().await, None);
+        assert_eq!(output_receiver.recv().await, None);
     }
 }
