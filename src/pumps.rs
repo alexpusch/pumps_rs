@@ -33,19 +33,22 @@ where
     pub fn from_stream(stream: impl Stream<Item = Out> + Send + 'static) -> Self {
         let (output_sender, output_receiver) = mpsc::channel(1);
 
-        tokio::spawn(async move {
+        let h = tokio::spawn(async move {
             tokio::pin!(stream);
             while let Some(output) = stream.next().await {
-                output_sender.send(output).await.unwrap();
+                if let Err(_e) = output_sender.send(output).await {
+                    break;
+                }
             }
         });
 
         Pipeline {
             output_receiver,
-            handles: FuturesUnordered::new(),
+            handles: [h].into_iter().collect(),
         }
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn from_iter<I>(iter: I) -> Self
     where
         I: IntoIterator<Item = Out> + Send + 'static,
@@ -53,17 +56,19 @@ where
     {
         let (output_sender, output_receiver) = mpsc::channel(1);
 
-        tokio::spawn(async move {
-            let mut iter = iter.into_iter();
+        let h = tokio::spawn(async move {
+            let iter = iter.into_iter();
 
-            while let Some(output) = iter.next() {
-                output_sender.send(output).await.unwrap();
+            for output in iter {
+                if let Err(_e) = output_sender.send(output).await {
+                    break;
+                };
             }
         });
 
         Pipeline {
             output_receiver,
-            handles: FuturesUnordered::new(),
+            handles: [h].into_iter().collect(),
         }
     }
 

@@ -33,7 +33,7 @@ impl Concurrency {
     pub fn backpressure(self, back_pressure: usize) -> Self {
         Self {
             concurrency: self.concurrency,
-            back_pressure: back_pressure,
+            back_pressure,
             preserve_order: self.preserve_order,
         }
     }

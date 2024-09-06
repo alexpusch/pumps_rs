@@ -24,6 +24,7 @@ pub enum FutureTiming {
 pub struct FutureTimings(Arc<Mutex<HashMap<i32, FutureTiming>>>);
 
 impl FutureTimings {
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         Self(Arc::new(Mutex::new(HashMap::new())))
     }
@@ -95,8 +96,7 @@ impl FutureTimings {
                 timings.set_polled(value.id).await;
 
                 // TODO - do not rely on time for testing
-                tokio::time::sleep(std::time::Duration::from_millis(10 * value.duration as u64))
-                    .await;
+                tokio::time::sleep(std::time::Duration::from_millis(10 * value.duration)).await;
 
                 timings.set_completed(value.id).await;
 
@@ -109,14 +109,13 @@ impl FutureTimings {
     pub async fn debug(&self) {
         let timings = self.0.lock().await;
 
-        let min_start = timings
+        let min_start = *timings
             .iter()
             .map(|t| match t {
                 (_, FutureTiming::Polled(start)) | (_, FutureTiming::Completed(start, _)) => start,
             })
             .min()
-            .unwrap()
-            .clone();
+            .unwrap();
 
         for (id, timing) in timings.iter() {
             match timing {
