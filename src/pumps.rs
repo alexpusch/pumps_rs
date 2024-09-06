@@ -17,19 +17,23 @@ pub struct Pipeline<Out> {
     handles: FuturesUnordered<JoinHandle<()>>,
 }
 
-pub trait IntoPipeline<Out> {
-    fn into_pipeline(self) -> Pipeline<Out>;
+impl<Out> From<Receiver<Out>> for Pipeline<Out> {
+    fn from(receiver: Receiver<Out>) -> Self {
+        Pipeline {
+            output_receiver: receiver,
+            handles: FuturesUnordered::new(),
+        }
+    }
 }
 
-impl<Out, T> IntoPipeline<Out> for T
+impl<Out> Pipeline<Out>
 where
-    T: Stream<Item = Out> + Send + 'static,
     Out: Send + 'static,
 {
-    fn into_pipeline(self) -> Pipeline<Out> {
+    pub fn from_stream(stream: impl Stream<Item = Out> + Send + 'static) -> Self {
         let (mut output_sender, output_receiver) = futures::channel::mpsc::channel(1);
+
         tokio::spawn(async move {
-            let stream = self.fuse();
             tokio::pin!(stream);
             while let Some(output) = stream.next().await {
                 output_sender.send(output).await.unwrap();
@@ -41,21 +45,26 @@ where
             handles: FuturesUnordered::new(),
         }
     }
-}
 
-impl<Out> Pipeline<Out>
-where
-    Out: Send + 'static,
-{
-    pub fn new(output_receiver: Receiver<Out>) -> Self {
-        Self {
+    pub fn from_iter<I>(iter: I) -> Self
+    where
+        I: IntoIterator<Item = Out> + Send + 'static,
+        <I as IntoIterator>::IntoIter: std::marker::Send,
+    {
+        let (mut output_sender, output_receiver) = futures::channel::mpsc::channel(1);
+
+        tokio::spawn(async move {
+            let mut iter = iter.into_iter();
+
+            while let Some(output) = iter.next() {
+                output_sender.send(output).await.unwrap();
+            }
+        });
+
+        Pipeline {
             output_receiver,
             handles: FuturesUnordered::new(),
         }
-    }
-
-    pub fn from(source: impl IntoPipeline<Out>) -> Self {
-        source.into_pipeline()
     }
 
     pub fn pump<P, POut>(self, pump: P) -> Pipeline<POut>
@@ -142,7 +151,7 @@ mod tests {
     async fn test_pipeline() {
         let (mut input_sender, input_receiver) = futures::channel::mpsc::channel(100);
 
-        let pipeline = Pipeline::new(input_receiver)
+        let pipeline = Pipeline::from(input_receiver)
             .map(async_job, Concurrency::concurrent(2).backpressure(100))
             .filter_map(async_filter_map, Concurrency::serial());
 
@@ -165,7 +174,7 @@ mod tests {
     async fn panic_handling() {
         let (mut input_sender, input_receiver) = futures::channel::mpsc::channel(100);
 
-        let (mut output_receiver, join_handle) = Pipeline::new(input_receiver)
+        let (mut output_receiver, join_handle) = Pipeline::from(input_receiver)
             .map(async_job, Concurrency::concurrent(2).backpressure(100))
             .map(
                 |x| async move {
@@ -193,11 +202,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_into_pipeline() {
+    async fn test_from_stream() {
         let stream = stream::iter(vec![1, 2, 3]);
 
-        let pipeline =
-            Pipeline::from(stream).map(async_job, Concurrency::concurrent(2).backpressure(100));
+        let pipeline = Pipeline::from_stream(stream).map(async_job, Concurrency::serial());
+
+        let mut output_receiver = pipeline.output_receiver;
+
+        assert_eq!(output_receiver.next().await, Some(1));
+        assert_eq!(output_receiver.next().await, Some(2));
+        assert_eq!(output_receiver.next().await, Some(3));
+
+        assert_eq!(output_receiver.next().await, None);
+    }
+
+    #[tokio::test]
+    async fn test_from_iter() {
+        let iter = vec![1, 2, 3];
+
+        let pipeline = Pipeline::from_iter(iter).map(async_job, Concurrency::serial());
 
         let mut output_receiver = pipeline.output_receiver;
 
