@@ -12,12 +12,12 @@
 //!
 //! Example:
 //!
-//! ```rust
+//! ```rust, ignore
 //! let (mut output_receiver, join_handle) = pumps::Pipeline::from_iter(urls)
-//!     .map(get_json, Concurrency::concurrent(5).preserve_order().backpressure(100))
+//!     .map(get_json, Concurrency::concurrent_ordered(5).backpressure(100))
 //!     .map(download_heavy_resource, Concurrency::serial())
-//!     .filter_map(run_algorithm, Concurrency::concurrent(5).backpressure(10))
-//!     .map(save_to_db, Concurrency::concurrent(100))
+//!     .filter_map(run_algorithm, Concurrency::concurrent_unordered(5).backpressure(10))
+//!     .map(save_to_db, Concurrency::concurrent_unordered(100))
 //!     .build();
 //!
 //! while let Some(output) = output_receiver.recv().await {
@@ -29,7 +29,7 @@
 //!
 //! A `Pump` is a wrapper around a common async programming (or rather multithreading) pattern - concurrent work is split into several tasks that communicate with each other using channels
 //!
-//! ```rust
+//! ```rust, ignore
 //! let (sender0, mut receiver0) = mpsc::channel(100);
 //! let (sender1, mut receiver1) = mpsc::channel(100);
 //! let (sender2, mut receiver2) = mpsc::channel(100);
@@ -62,7 +62,7 @@
 //!
 //! ### Creation
 //!
-//! ```rust
+//! ```rust,ignore
 //! // from channel
 //! let (mut output_receiver, join_handle) = Pipeline::from(tokio_channel);
 //!
@@ -78,9 +78,8 @@
 //! ### Concurrency control
 //!
 //! Each Pump operation receives a `Concurrency` struct that defines the concurrency characteristics of the operation.
-//!
-//! - Serial vs concurrency execution: `Concurrency::serial()`, `Concurrency::concurrent(n)`
-//! - Unordered by default. Preserve order `Concurrency::concurrent(n).preserve_order()`
+//! - serial execution - `Concurrency::serial()`
+//! - concurrent execution - `Concurrency::concurrent_ordered(n)`, `Concurrency::concurrent_unordered(n)`
 //!
 //! #### Backpressure
 //!

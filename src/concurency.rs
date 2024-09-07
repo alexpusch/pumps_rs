@@ -12,11 +12,19 @@ pub struct Concurrency {
 }
 
 impl Concurrency {
-    pub fn concurrent(concurrency: usize) -> Self {
+    pub fn concurrent_unordered(concurrency: usize) -> Self {
         Self {
             concurrency,
             backpressure: concurrency,
             preserve_order: false,
+        }
+    }
+
+    pub fn concurrent_ordered(concurrency: usize) -> Self {
+        Self {
+            concurrency,
+            backpressure: concurrency,
+            preserve_order: true,
         }
     }
 
@@ -33,13 +41,6 @@ impl Concurrency {
     pub fn backpressure(self, backpressure: usize) -> Self {
         Self {
             backpressure,
-            ..self
-        }
-    }
-
-    pub fn preserve_order(self) -> Self {
-        Self {
-            preserve_order: true,
             ..self
         }
     }

@@ -101,7 +101,7 @@ mod tests {
         let timings = FutureTimings::new();
 
         let pump = FilterMapPump {
-            concurrency: Concurrency::concurrent(2),
+            concurrency: Concurrency::concurrent_unordered(2),
             map_fn: timings.get_tracked_fn(|value| Some(value.id)),
         };
 
@@ -134,7 +134,7 @@ mod tests {
         let timings = FutureTimings::new();
 
         let pump = FilterMapPump {
-            concurrency: Concurrency::concurrent(2).preserve_order(),
+            concurrency: Concurrency::concurrent_ordered(2),
             map_fn: timings.get_tracked_fn(|value| Some(value.id)),
         };
 
@@ -166,7 +166,7 @@ mod tests {
         let timings = FutureTimings::new();
 
         let pump = FilterMapPump {
-            concurrency: Concurrency::concurrent(2).backpressure(1),
+            concurrency: Concurrency::concurrent_unordered(2).backpressure(1),
             map_fn: timings.get_tracked_fn(|value| Some(value.id)),
         };
 

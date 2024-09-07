@@ -157,7 +157,10 @@ mod tests {
         let (input_sender, input_receiver) = mpsc::channel(100);
 
         let pipeline = Pipeline::from(input_receiver)
-            .map(async_job, Concurrency::concurrent(2).backpressure(100))
+            .map(
+                async_job,
+                Concurrency::concurrent_unordered(2).backpressure(100),
+            )
             .filter_map(async_filter_map, Concurrency::serial());
 
         let (mut output_receiver, join_handle) = pipeline.build();
@@ -180,7 +183,10 @@ mod tests {
         let (input_sender, input_receiver) = mpsc::channel(100);
 
         let (mut output_receiver, join_handle) = Pipeline::from(input_receiver)
-            .map(async_job, Concurrency::concurrent(2).backpressure(100))
+            .map(
+                async_job,
+                Concurrency::concurrent_unordered(2).backpressure(100),
+            )
             .map(
                 |x| async move {
                     if x == 2 {
@@ -189,7 +195,7 @@ mod tests {
 
                     x
                 },
-                Concurrency::concurrent(2).backpressure(100),
+                Concurrency::concurrent_unordered(2).backpressure(100),
             )
             .build();
 

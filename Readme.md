@@ -23,10 +23,10 @@ Example:
 
 ```rust
 let (mut output_receiver, join_handle) = pumps::Pipeline::from_iter(urls)
-    .map(get_json, Concurrency::concurrent(5).preserve_order().backpressure(100))
+    .map(get_json, Concurrency::concurrent_ordered(5).backpressure(100))
     .map(download_heavy_resource, Concurrency::serial())
-    .filter_map(run_algorithm, Concurrency::concurrent(5).backpressure(10))
-    .map(save_to_db, Concurrency::concurrent(100))
+    .filter_map(run_algorithm, Concurrency::concurrent_unordered(5).backpressure(10))
+    .map(save_to_db, Concurrency::concurrent_unordered(100))
     .build();
 
 while let Some(output) = output_receiver.recv().await {
@@ -88,8 +88,8 @@ The `.build()` method returns a touple of a `tokio::sync::mpsc::Receiver` and a 
 
 Each Pump operation receives a `Concurrency` struct that defines the concurrency characteristics of the operation.
 
-- Serial vs concurrency execution: `Concurrency::serial()`, `Concurrency::concurrent(n)`
-- Unordered by default. Preserve order `Concurrency::concurrent(n).preserve_order()`
+- serial execution - `Concurrency::serial()`
+- concurrent execution - `Concurrency::concurrent_ordered(n)`, `Concurrency::concurrent_unordered(n)`
 
 #### Backpressure
 
