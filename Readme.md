@@ -1,6 +1,6 @@
 # pumps_rs
 
-Eager streams for Rust. If a stream waits for the water to flow down the hill, a pump forces it up.
+Eager streams for Rust. If a stream allows water to flow down the hill, a pump forces it up.
 
 [Futures stream api](https://docs.rs/futures/latest/futures/stream/index.html#) is awesome, but has unfortunate issues
 
@@ -16,6 +16,7 @@ Main features:
 - Designed for common async pipelining needs in heart
 - Explicit concurrency, ordering, and backpressure control
 - Eager - work is done before downstream methods consumes it
+- builds on top of Rust async tools as tasks and channels.
 - For now only supports the Tokio async runtime
 
 Example:
@@ -56,14 +57,17 @@ tokio::spawn(async move {
     }
 });
 
-sender0.send(data).await.unwrap();
+// send data to input channel
+send_input(sender0).await;
 
 while let Some(output) = receiver2.recv().await {
     println!("done with {}", output);
 }
 ```
 
-A `Pipeline` is a chain of `Pump`s. Each `Pump` is a spawned task that receives data from the previous Pump via channel, runs some operation, and sends the output channel to the next `Pump`.
+A 'Pump' is one step of such pipeline - a task and input/output channel. For example the `Map` Pump spawns a task, receives input via a `Receiver`, runs an async function, and sends its output to a `Sender`
+
+A `Pipeline` is a chain of `Pump`s. Each pump receives its input from the output channel of its predecessor
 
 ### Creation
 
@@ -91,8 +95,6 @@ Each Pump operation receives a `Concurrency` struct that defines the concurrency
 
 Backpressure defines the amount of unconsumed data can accumulate in memory. Without back pressure an eger operation will keep processing data and storing it in memory. A slow downstream consumer will result with unbounded memory usage.
 
-The `.backpressure(n)` definition would limit the output channel of a `Pump` allowing it to stop processing data before output channel have been consumed.
+The `.backpressure(n)` definition limits the output channel of a `Pump` allowing it to stop processing data until the output channel have been consumed.
 
 The default backpressure is equal to the concurrency number
-
-##
