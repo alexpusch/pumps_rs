@@ -6,7 +6,7 @@ use tokio::{
     task::{JoinError, JoinHandle},
 };
 
-use crate::{concurency::Concurrency, filter_map::FilterMapPump, map::MapPump};
+use crate::{concurrency::Concurrency, filter_map::FilterMapPump, map::MapPump, map_ok::MapOkPump};
 
 pub trait Pump<In, Out> {
     fn spawn(self, input_receiver: Receiver<In>) -> (Receiver<Out>, JoinHandle<()>);
@@ -23,6 +23,26 @@ impl<Out> From<Receiver<Out>> for Pipeline<Out> {
             output_receiver: receiver,
             handles: FuturesUnordered::new(),
         }
+    }
+}
+
+impl<Out, PErr> Pipeline<Result<Out, PErr>> {
+    pub fn map_ok<F, POut, PFut>(
+        self,
+        map_fn: F,
+        concurrency: Concurrency,
+    ) -> Pipeline<Result<POut, PErr>>
+    where
+        F: Fn(Out) -> PFut + Send + 'static,
+        PFut: Future<Output = POut> + Send,
+        POut: Send + 'static,
+        PErr: Send + 'static,
+        Out: Send + 'static,
+    {
+        self.pump(MapOkPump {
+            map_fn,
+            concurrency,
+        })
     }
 }
 

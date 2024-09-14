@@ -89,8 +89,10 @@
 //!
 //! The default backpressure is equal to the concurrency number
 
-pub mod concurency;
+pub mod concurrency;
+mod concurrency_base;
 pub mod filter_map;
 pub mod map;
+pub mod map_ok;
 pub mod pumps;
-pub mod test_utils;
+mod test_utils;

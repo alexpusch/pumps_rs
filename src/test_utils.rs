@@ -49,6 +49,15 @@ impl FutureTimings {
         this.insert(id, completed);
     }
 
+    pub async fn is_completed(&self, id: i32) -> bool {
+        let timings = self.0.lock().await;
+
+        match timings.get(&id) {
+            Some(FutureTiming::Completed(_, _)) => true,
+            _ => false,
+        }
+    }
+
     pub async fn run_after(&self, id1: i32, id2: i32) -> bool {
         let timings = self.0.lock().await;
 

@@ -46,6 +46,12 @@ impl Concurrency {
     }
 }
 
+impl Default for Concurrency {
+    fn default() -> Self {
+        Self::serial()
+    }
+}
+
 #[derive(Debug)]
 pub(crate) enum FuturesContainer<T>
 where
