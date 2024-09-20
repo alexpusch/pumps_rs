@@ -6,14 +6,20 @@ use tokio::{
     task::{JoinError, JoinHandle},
 };
 
-use crate::{concurrency::Concurrency, filter_map::FilterMapPump, map::MapPump, map_ok::MapOkPump};
+use crate::{
+    concurrency::{self, Concurrency},
+    filter_map::FilterMapPump,
+    flatten::{FlattenConcurrency, FlattenPump},
+    map::MapPump,
+    map_ok::MapOkPump,
+};
 
 pub trait Pump<In, Out> {
     fn spawn(self, input_receiver: Receiver<In>) -> (Receiver<Out>, JoinHandle<()>);
 }
 
 pub struct Pipeline<Out> {
-    output_receiver: Receiver<Out>,
+    pub(crate) output_receiver: Receiver<Out>,
     handles: FuturesUnordered<JoinHandle<()>>,
 }
 
@@ -43,6 +49,15 @@ impl<Out, PErr> Pipeline<Result<Out, PErr>> {
             map_fn,
             concurrency,
         })
+    }
+}
+
+impl<Out> Pipeline<Pipeline<Out>> {
+    pub fn flatten(self, concurrency: FlattenConcurrency) -> Pipeline<Out>
+    where
+        Out: Send + Sync + 'static,
+    {
+        self.pump(FlattenPump { concurrency })
     }
 }
 

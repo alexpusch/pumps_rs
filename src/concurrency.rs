@@ -32,7 +32,7 @@ impl Concurrency {
         Self {
             concurrency: 1,
             backpressure: 1,
-            preserve_order: false,
+            preserve_order: true,
         }
     }
 

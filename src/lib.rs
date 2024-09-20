@@ -92,6 +92,7 @@
 pub mod concurrency;
 mod concurrency_base;
 pub mod filter_map;
+pub mod flatten;
 pub mod map;
 pub mod map_ok;
 pub mod pumps;
