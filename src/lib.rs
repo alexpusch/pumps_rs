@@ -4,7 +4,7 @@
 //!
 //! Main features:
 //!
-//! - Designed for common async pipelining needs in heart
+//! - Designed with common async pipelining needs in heart
 //! - Explicit concurrency, ordering, and backpressure control
 //! - Eager - work is done before downstream methods consumes it
 //! - builds on top of Rust async tools as tasks and channels.
@@ -12,8 +12,15 @@
 //!
 //! Example:
 //!
-//! ```rust, ignore
-//! let (mut output_receiver, join_handle) = pumps::Pipeline::from_iter(urls)
+//! ```rust
+//! use pumps::{Pipeline, Concurrency};
+//! # tokio::runtime::Runtime::new().unwrap().block_on(async {
+//! # async fn get_json(url: String) -> String { url }
+//! # async fn download_heavy_resource(json: String) -> String { json }
+//! # async fn run_algorithm(json: String) -> Option<String> { Some(json) }
+//! # async fn save_to_db(json: String) -> String { json }
+//! # let urls:Vec<String> = Vec::new();
+//! let (mut output_receiver, join_handle) = Pipeline::from_iter(urls)
 //!     .map(get_json, Concurrency::concurrent_ordered(5).backpressure(100))
 //!     .map(download_heavy_resource, Concurrency::serial())
 //!     .filter_map(run_algorithm, Concurrency::concurrent_unordered(5).backpressure(10))
@@ -23,6 +30,7 @@
 //! while let Some(output) = output_receiver.recv().await {
 //!     println!("{output}");
 //! }
+//! # });
 //! ```
 //!
 //! ## Pumps
@@ -58,26 +66,32 @@
 //!
 //! A 'Pump' is one step of such pipeline - a task and input/output channel. For example the `Map` Pump spawns a task, receives input via a `Receiver`, runs an async function, and sends its output to a `Sender`
 //!
-//! A `Pipeline` is a chain of `Pump`s. Each pump receives its input from the output channel of its predecessor
+//! A [`Pipeline`] is a chain of `Pump`s. Each pump receives its input from the output channel of its predecessor
 //!
 //! ### Creation
 //!
-//! ```rust,ignore
+//! ```rust
+//! use pumps::Pipeline;
+//! # tokio::runtime::Runtime::new().unwrap().block_on(async {
 //! // from channel
-//! let (mut output_receiver, join_handle) = Pipeline::from(tokio_channel);
+//! let (sender, receiver) = tokio::sync::mpsc::channel::<u32>(100);
+//! let (mut output_receiver, join_handle) = Pipeline::from(receiver).build();
 //!
 //! // from a stream
-//! let (mut output_receiver, join_handle) = Pipeline::from_stream(stream);
+//! let stream = futures::stream::iter(vec![1, 2, 3]);
+//! let (mut output_receiver, join_handle) = Pipeline::from_stream(stream).build();
 //!
-//! // create an iterator
-//! let (mut output_receiver, join_handle) = Pipeline::from_iter(iter);
+//! // from an IntoIterator
+//! let iter = vec![1, 2, 3];
+//! let (mut output_receiver, join_handle) = Pipeline::from_iter(iter).build();
+//! # });
 //! ```
 //!
 //! The `.build()` method returns a touple of a `tokio::sync::mpsc::Receiver` and a join handle to the internally spawned tasks
 //!
 //! ### Concurrency control
 //!
-//! Each Pump operation receives a `Concurrency` struct that defines the concurrency characteristics of the operation.
+//! Each Pump operation receives a [`Concurrency`] struct that defines the concurrency characteristics of the operation.
 //! - serial execution - `Concurrency::serial()`
 //! - concurrent execution - `Concurrency::concurrent_ordered(n)`, `Concurrency::concurrent_unordered(n)`
 //!
@@ -89,11 +103,15 @@
 //!
 //! The default backpressure is equal to the concurrency number
 
-pub mod concurrency;
+mod concurrency;
 mod concurrency_base;
-pub mod filter_map;
-pub mod flatten;
-pub mod map;
-pub mod map_ok;
-pub mod pumps;
+mod filter_map;
+mod flatten;
+mod map;
+mod map_ok;
+mod pumps;
 mod test_utils;
+
+pub use concurrency::Concurrency;
+pub use flatten::FlattenConcurrency;
+pub use pumps::Pipeline;

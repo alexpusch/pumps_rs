@@ -5,13 +5,30 @@ use futures::{
     StreamExt,
 };
 
+/// Controls concurrency characteristics of a Pump operation
+///
+/// Example:
+///
+/// ```rust
+/// use pumps::Concurrency;
+///
+/// // define a concurrent operation with 10 concurrent futures with backpressure of 100
+/// let concurrency = Concurrency::concurrent_ordered(10).backpressure(100);
+/// ```
 pub struct Concurrency {
+    /// How many futures can be run concurrently in the configured operation
     pub concurrency: usize,
+    /// How many future results can be stored in memory before a consumer receives them from the output channel.
+    /// In other words, this is the size of the output channel.
+    /// When the output channel is full, the operation will stop processing additioanl data
+    /// Defaults to the concurrency number
     pub backpressure: usize,
+    /// whether to preserve the order of the input stream
     pub preserve_order: bool,
 }
 
 impl Concurrency {
+    /// Defines an unordered concurrency with given number of concurrent futures executions
     pub fn concurrent_unordered(concurrency: usize) -> Self {
         Self {
             concurrency,
@@ -20,6 +37,7 @@ impl Concurrency {
         }
     }
 
+    /// Defines an ordered concurrency with given number of concurrent futures executions
     pub fn concurrent_ordered(concurrency: usize) -> Self {
         Self {
             concurrency,
@@ -28,6 +46,7 @@ impl Concurrency {
         }
     }
 
+    /// Defines a serial concurrency with only one future execution at a time
     pub fn serial() -> Self {
         Self {
             concurrency: 1,
@@ -52,6 +71,8 @@ impl Default for Concurrency {
     }
 }
 
+/// A wrapper around `FuturesOrdered` and `FuturesUnordered` that allows for a unified interface
+/// and conigureable order
 #[derive(Debug)]
 pub(crate) enum FuturesContainer<T>
 where

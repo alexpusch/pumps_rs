@@ -263,7 +263,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pumps_rs"
+name = "pumps"
 version = "0.1.0"
 dependencies = [
  "futures",

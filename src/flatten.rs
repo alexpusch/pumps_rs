@@ -5,12 +5,20 @@ use tokio::{
 
 use crate::pumps::{Pipeline, Pump};
 
+/// Defines concurrency characteristics of a Flatten operation
+/// Unline [`Concurrency`], this struct does not have a `concurrency` field. A `concurrency` value is not relevant
+/// for a Flatten operation, as it is the upstream operations that are executed concurrently
 pub struct FlattenConcurrency {
+    /// How many future results can be stored in memory before a consumer receives them from the output channel.
+    /// In other words, this is the size of the output channel.
+    /// When the output channel is full, the operation will stop processing additioanl data
+    /// Defaults to 1
     pub backpressure: usize,
     pub preserve_order: bool,
 }
 
 impl FlattenConcurrency {
+    /// Defines a flatten operation that preserves the order of the input streams
     pub fn ordered() -> Self {
         Self {
             backpressure: 1,
@@ -18,6 +26,7 @@ impl FlattenConcurrency {
         }
     }
 
+    /// Defines a flatten operation that does not preserve the order of the input streams
     pub fn unordered() -> Self {
         Self {
             backpressure: 1,
@@ -25,6 +34,7 @@ impl FlattenConcurrency {
         }
     }
 
+    /// How many futures can be stored in memory before a consumer takes them from the output channel
     pub fn backpressure(self, backpressure: usize) -> Self {
         Self {
             backpressure,

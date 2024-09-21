@@ -7,17 +7,67 @@ use tokio::{
 };
 
 use crate::{
-    concurrency::{self, Concurrency},
+    concurrency::Concurrency,
     filter_map::FilterMapPump,
     flatten::{FlattenConcurrency, FlattenPump},
     map::MapPump,
     map_ok::MapOkPump,
 };
 
+/// A `Pump` is a component that data flows through, processed, and flows out.
+/// It is a wrapper around an input receiver, a task and an output sender.
+/// ```
 pub trait Pump<In, Out> {
+    /// Spawns the pumps task and returns the output receiver and the tasks join handle
     fn spawn(self, input_receiver: Receiver<In>) -> (Receiver<Out>, JoinHandle<()>);
 }
 
+/// A `Pipeline` is the builder API for a series of `Pump` operations.
+///
+/// A Pipeline is constructed out of an `Iterator`, a `Stream` or a `Receiver`. After constructing the pipeline, additional pumps can be attached to it, filtering, transforming or perform other operations on the data.
+/// After defining the needed operations, the `.build()` method is used to obtain the output `Receiver` and a `JoinHandle` to the internally spawned tasks.
+/// To use the pipeline result, use the output Receiver as you wish.
+///
+/// ## Concurrency
+/// Most pipeline operations are preformed concurrently. The concurrency characteristics of each operation can be controlled by the [`Concurrency`] module.
+///
+/// # Example
+/// ```rust
+/// use pumps::{Pipeline, Concurrency};
+///
+/// # tokio::runtime::Runtime::new().unwrap().block_on(async {
+/// let (mut output, h) = Pipeline::from_iter(vec![1, 2, 3, 4, 5])
+///     .filter_map(|x| async move { (x %2 == 0).then_some(x)}, Concurrency::concurrent_ordered(8))
+///     .map(|x| async move { x * 2 }, Concurrency::concurrent_ordered(8).backpressure(100))
+///     .map(|x| async move { x + 1 }, Concurrency::serial())
+///     .build();
+///
+/// assert_eq!(output.recv().await, Some(5));
+/// assert_eq!(output.recv().await, Some(9));
+/// assert_eq!(output.recv().await, None);
+/// # });
+/// ```
+/// ## Panic handling
+/// Since Pumps are spawned as tasks, they can panic. On panic, all inner tasks and channels will close.
+/// The `.build()` method returns a `JoinHandle` that can be awaited to check if the pipeline has finished successfully.
+///
+/// ```rust
+/// use pumps::{Pipeline, Concurrency};
+///
+/// # tokio::runtime::Runtime::new().unwrap().block_on(async {
+/// let (mut output, h) = Pipeline::from_iter(vec![1, 2, 3])
+///     .map(|x| async move { panic!("oh no"); x }, Concurrency::concurrent_ordered(8))
+///     .build();
+///
+/// while let Some(output) = output.recv().await {
+///    println!("received output {}", output);
+/// }
+///
+/// let res =  h.await;
+///
+/// assert!(res.is_err());
+/// # });
+/// ```
 pub struct Pipeline<Out> {
     pub(crate) output_receiver: Receiver<Out>,
     handles: FuturesUnordered<JoinHandle<()>>,
@@ -32,39 +82,11 @@ impl<Out> From<Receiver<Out>> for Pipeline<Out> {
     }
 }
 
-impl<Out, PErr> Pipeline<Result<Out, PErr>> {
-    pub fn map_ok<F, POut, PFut>(
-        self,
-        map_fn: F,
-        concurrency: Concurrency,
-    ) -> Pipeline<Result<POut, PErr>>
-    where
-        F: Fn(Out) -> PFut + Send + 'static,
-        PFut: Future<Output = POut> + Send,
-        POut: Send + 'static,
-        PErr: Send + 'static,
-        Out: Send + 'static,
-    {
-        self.pump(MapOkPump {
-            map_fn,
-            concurrency,
-        })
-    }
-}
-
-impl<Out> Pipeline<Pipeline<Out>> {
-    pub fn flatten(self, concurrency: FlattenConcurrency) -> Pipeline<Out>
-    where
-        Out: Send + Sync + 'static,
-    {
-        self.pump(FlattenPump { concurrency })
-    }
-}
-
 impl<Out> Pipeline<Out>
 where
     Out: Send + 'static,
 {
+    /// Construct a [Pipeline] from a [futures_util::stream::Stream](https://docs.rs/futures/latest/futures/stream/index.html)
     pub fn from_stream(stream: impl Stream<Item = Out> + Send + 'static) -> Self {
         let (output_sender, output_receiver) = mpsc::channel(1);
 
@@ -83,7 +105,7 @@ where
         }
     }
 
-    #[allow(clippy::should_implement_trait)]
+    /// Construct a [`Pipeline`] from an [`IntoIterator`]
     pub fn from_iter<I>(iter: I) -> Self
     where
         I: IntoIterator<Item = Out> + Send + 'static,
@@ -107,9 +129,11 @@ where
         }
     }
 
-    pub fn pump<P, POut>(self, pump: P) -> Pipeline<POut>
+    /// attach an additional `Pump` to the pipeline
+    /// This method can be used to create custom `Pump` oprations
+    pub fn pump<P, T>(self, pump: P) -> Pipeline<T>
     where
-        P: Pump<Out, POut>,
+        P: Pump<Out, T>,
     {
         let (pump_output_receiver, join_handle) = pump.spawn(self.output_receiver);
         let handles = self.handles;
@@ -121,11 +145,28 @@ where
         }
     }
 
-    pub fn map<F, POut, PFut>(self, map_fn: F, concurrency: Concurrency) -> Pipeline<POut>
+    /// Attach a map pump to the pipeline. Map will apply the provided function to each item.
+    ///
+    /// # Example
+    /// ```rust
+    /// use pumps::{Pipeline, Concurrency};
+    ///
+    /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
+    /// let (mut output, h) = Pipeline::from_iter(vec![1, 2, 3])
+    ///     .map(|x| async move { x * 2 }, Concurrency::concurrent_ordered(8))
+    ///     .build();
+    ///
+    /// assert_eq!(output.recv().await, Some(2));
+    /// assert_eq!(output.recv().await, Some(4));
+    /// assert_eq!(output.recv().await, Some(6));
+    /// assert_eq!(output.recv().await, None);
+    /// # });
+    /// ```
+    pub fn map<F, Fut, T>(self, map_fn: F, concurrency: Concurrency) -> Pipeline<T>
     where
-        F: Fn(Out) -> PFut + Send + 'static,
-        PFut: Future<Output = POut> + Send + 'static,
-        POut: Send + 'static,
+        F: Fn(Out) -> Fut + Send + 'static,
+        Fut: Future<Output = T> + Send + 'static,
+        T: Send + 'static,
         Out: Send + 'static,
     {
         self.pump(MapPump {
@@ -134,11 +175,26 @@ where
         })
     }
 
-    pub fn filter_map<F, POut, PFut>(self, map_fn: F, concurrency: Concurrency) -> Pipeline<POut>
+    /// Attach a filter_map pump to the pipeline. Filter map will apply the provided function to each item, removing items that avaluate to None from the pipeline.
+    ///
+    /// # Example
+    /// ```rust
+    /// use pumps::{Pipeline, Concurrency};
+    ///
+    /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
+    /// let (mut output, h) = Pipeline::from_iter(vec![1, 2, 3])
+    ///     .filter_map(|x| async move { (x % 2 == 0).then_some(x) }, Concurrency::concurrent_ordered(8))
+    ///     .build();
+    ///
+    /// assert_eq!(output.recv().await, Some(2));
+    /// assert_eq!(output.recv().await, None);
+    /// # });
+    /// ```
+    pub fn filter_map<F, Fut, T>(self, map_fn: F, concurrency: Concurrency) -> Pipeline<T>
     where
-        F: Fn(Out) -> PFut + Send + 'static,
-        PFut: Future<Output = Option<POut>> + Send + 'static,
-        POut: Send + 'static,
+        F: Fn(Out) -> Fut + Send + 'static,
+        Fut: Future<Output = Option<T>> + Send + 'static,
+        T: Send + 'static,
         Out: Send + 'static,
     {
         self.pump(FilterMapPump {
@@ -147,12 +203,7 @@ where
         })
     }
 
-    pub fn abort(self) {
-        for handle in self.handles {
-            handle.abort();
-        }
-    }
-
+    /// Returns the output receiver and a join handle - a future that resolves when all inner tasks have finished.
     pub fn build(mut self) -> (Receiver<Out>, BoxFuture<'static, Result<(), JoinError>>) {
         let join_result = async move {
             while let Some(res) = self.handles.next().await {
@@ -166,6 +217,78 @@ where
         };
 
         (self.output_receiver, join_result.boxed())
+    }
+
+    /// aborts all inner tasks
+    pub fn abort(self) {
+        for handle in self.handles {
+            handle.abort();
+        }
+    }
+}
+
+impl<Out> Pipeline<Pipeline<Out>>
+where
+    Out: Send + Sync + 'static,
+{
+    /// Given a pipeline of pipelines, flatten it into a single pipeline.
+    /// Ordering and backpressure is controlled by the [FlattenConcurrency] parameter.
+    ///
+    /// # Example
+    /// ```rust
+    /// use pumps::{Pipeline, FlattenConcurrency};
+    ///
+    /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
+    /// let (mut output, h) = Pipeline::from_iter(vec![Pipeline::from_iter(vec![1, 2]),Pipeline::from_iter(vec![3, 4])])
+    ///     .flatten(FlattenConcurrency::ordered())
+    ///     .build();
+    ///
+    /// assert_eq!(output.recv().await, Some(1));
+    /// assert_eq!(output.recv().await, Some(2));
+    /// assert_eq!(output.recv().await, Some(3));
+    /// assert_eq!(output.recv().await, Some(4));
+    /// assert_eq!(output.recv().await, None);
+    /// # });
+    /// ```
+    pub fn flatten(self, concurrency: FlattenConcurrency) -> Pipeline<Out> {
+        self.pump(FlattenPump { concurrency })
+    }
+}
+
+impl<OutOk, OutErr> Pipeline<Result<OutOk, OutErr>> {
+    /// applies a function to the sucess value for each item in a [Pipeline] of `Results<T, E>`
+    ///
+    /// # Example
+    /// ```rust
+    /// use pumps::{Pipeline, Concurrency};
+    ///
+    /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
+    /// let (mut output, h) = Pipeline::from_iter(vec![Ok(1), Err(()), Ok(2)])
+    ///     .map_ok(|x| async move { x * 2 }, Concurrency::concurrent_ordered(8))
+    ///     .build();
+    ///
+    /// assert_eq!(output.recv().await, Some(Ok(2)));
+    /// assert_eq!(output.recv().await, Some(Err(())));
+    /// assert_eq!(output.recv().await, Some(Ok(4)));
+    /// assert_eq!(output.recv().await, None);
+    /// # });
+    /// ```
+    pub fn map_ok<F, Fut, T>(
+        self,
+        map_fn: F,
+        concurrency: Concurrency,
+    ) -> Pipeline<Result<T, OutErr>>
+    where
+        F: Fn(OutOk) -> Fut + Send + 'static,
+        Fut: Future<Output = T> + Send,
+        T: Send + 'static,
+        OutErr: Send + 'static,
+        OutOk: Send + 'static,
+    {
+        self.pump(MapOkPump {
+            map_fn,
+            concurrency,
+        })
     }
 }
 

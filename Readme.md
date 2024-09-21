@@ -1,4 +1,4 @@
-# pumps_rs
+# pumps-rs
 
 Eager streams for Rust. If a stream allows water to flow down the hill, a pump forces it up.
 
