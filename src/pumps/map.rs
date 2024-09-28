@@ -2,7 +2,7 @@ use std::future::Future;
 
 use tokio::{sync::mpsc::Receiver, task::JoinHandle};
 
-use crate::{concurrency::Concurrency, concurrency_base, pumps::Pump};
+use crate::{concurrency::Concurrency, concurrency_base, Pump};
 
 pub struct MapPump<F> {
     pub(crate) map_fn: F,
@@ -40,7 +40,7 @@ mod tests {
 
     use tokio::sync::mpsc;
 
-    use crate::pumps::Pipeline;
+    use crate::Pipeline;
 
     #[tokio::test]
     async fn map_works() {

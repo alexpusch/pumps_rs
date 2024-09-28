@@ -3,7 +3,7 @@ use tokio::{
     task::JoinHandle,
 };
 
-use crate::pumps::{Pipeline, Pump};
+use crate::{Pipeline, Pump};
 
 /// Defines concurrency characteristics of a Flatten operation
 /// Unline [`Concurrency`], this struct does not have a `concurrency` field. A `concurrency` value is not relevant

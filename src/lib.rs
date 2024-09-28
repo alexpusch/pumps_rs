@@ -105,13 +105,13 @@
 
 mod concurrency;
 mod concurrency_base;
-mod filter_map;
-mod flatten;
-mod map;
-mod map_ok;
+mod pipeline;
 mod pumps;
+
+#[cfg(test)]
 mod test_utils;
 
 pub use concurrency::Concurrency;
-pub use flatten::FlattenConcurrency;
-pub use pumps::Pipeline;
+pub use pipeline::Pipeline;
+pub use pumps::flatten::FlattenConcurrency;
+pub use pumps::pump::Pump;
