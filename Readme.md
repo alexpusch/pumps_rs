@@ -18,6 +18,8 @@ Main features:
 - Eager - work is done before downstream methods consumes it
 - builds on top of Rust async tools as tasks and channels.
 - For now only supports the Tokio async runtime
+- TBA
+    - [ ] additional operators
 
 Example:
 
