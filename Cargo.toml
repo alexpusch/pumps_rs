@@ -1,9 +1,15 @@
 [package]
 name = "pumps"
-version = "0.1.0"
+description = "Eager streams for Rust"
+keywords = ["async", "pipeline"]
+version = "0.0.1"
 edition = "2021"
+license-file = "LICENSE-MIT"
+homepage = "https://github.com/alexpusch/pumps_rs"
+repository = "https://github.com/alexpusch/pumps_rs"
+readme = "Readme.md"
+
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
 futures = "0.3.30"
-pin-project-lite = "0.2.14"
