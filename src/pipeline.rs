@@ -12,6 +12,7 @@ use crate::{
         filter_map::FilterMapPump,
         flatten::{FlattenConcurrency, FlattenPump},
         map::MapPump,
+        map_err::MapErrPump,
         map_ok::MapOkPump,
     },
     Pump,
@@ -282,7 +283,7 @@ where
 }
 
 impl<OutOk, OutErr> Pipeline<Result<OutOk, OutErr>> {
-    /// applies a function to the sucess value for each item in a [Pipeline] of `Results<T, E>`
+    /// applies a function to the success value for each item in a [Pipeline] of `Results<T, E>`
     ///
     /// # Example
     /// ```rust
@@ -312,6 +313,41 @@ impl<OutOk, OutErr> Pipeline<Result<OutOk, OutErr>> {
         OutOk: Send + 'static,
     {
         self.pump(MapOkPump {
+            map_fn,
+            concurrency,
+        })
+    }
+
+    /// applies a function to the error value for each item in a [Pipeline] of `Results<T, E>`
+    ///
+    /// # Example
+    /// ```rust
+    /// use pumps::{Pipeline, Concurrency};
+    ///
+    /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
+    /// let (mut output, h) = Pipeline::from_iter(vec![Ok(1), Err("oh no"), Ok(2)])
+    ///     .map_err(|x| async move { format!("{x}!") }, Concurrency::concurrent_ordered(8))
+    ///     .build();
+    ///
+    /// assert_eq!(output.recv().await, Some(Ok(1)));
+    /// assert_eq!(output.recv().await, Some(Err("oh no!".to_string())));
+    /// assert_eq!(output.recv().await, Some(Ok(2)));
+    /// assert_eq!(output.recv().await, None);
+    /// # });
+    /// ```
+    pub fn map_err<F, Fut, T>(
+        self,
+        map_fn: F,
+        concurrency: Concurrency,
+    ) -> Pipeline<Result<OutOk, T>>
+    where
+        F: Fn(OutErr) -> Fut + Send + 'static,
+        Fut: Future<Output = T> + Send,
+        T: Send + 'static,
+        OutErr: Send + 'static,
+        OutOk: Send + 'static,
+    {
+        self.pump(MapErrPump {
             map_fn,
             concurrency,
         })
