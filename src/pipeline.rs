@@ -219,6 +219,16 @@ where
         self.pump(crate::pumps::enumerate::EnumeratePump)
     }
 
+    /// Attach a skip pump to the pipeline. Skip will skip the first `n` items in the pipeline.
+    pub fn skip(self, n: usize) -> Pipeline<Out> {
+        self.pump(crate::pumps::skip::SkipPump { n })
+    }
+
+    /// Attach a take pump to the pipeline. Take will take the first `n` items in the pipeline.
+    pub fn take(self, n: usize) -> Pipeline<Out> {
+        self.pump(crate::pumps::take::TakePump { n })
+    }
+
     /// Returns the output receiver and a join handle - a future that resolves when all inner tasks have finished.
     pub fn build(mut self) -> (Receiver<Out>, BoxFuture<'static, Result<(), JoinError>>) {
         let join_result = async move {
