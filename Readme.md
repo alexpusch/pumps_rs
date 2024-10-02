@@ -2,6 +2,9 @@
 
 Eager streams for Rust. If a stream allows water to flow down the hill, a pump forces it up.
 
+[![Crates.io](https://img.shields.io/crates/v/pumps)](https://crates.io/crates/pumps)
+[![Documentation](https://docs.rs/pumps/badge.svg)][docs]
+
 [Futures stream api](https://docs.rs/futures/latest/futures/stream/index.html#) is awesome, but has unfortunate issues
 
 - Futures run in surprising and unintuitive order. Read about [Barbara battles buffered streams](https://rust-lang.github.io/wg-async/vision/submitted_stories/status_quo/barbara_battles_buffered_streams.html)
