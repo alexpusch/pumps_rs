@@ -12,12 +12,12 @@ pub struct FilterMapPump<F> {
 
 impl<In, Out, F, Fut> Pump<In, Out> for FilterMapPump<F>
 where
-    F: Fn(In) -> Fut + Send + 'static,
+    F: FnMut(In) -> Fut + Send + 'static,
     Fut: Future<Output = Option<Out>> + Send,
     In: Send + 'static,
     Out: Send + 'static,
 {
-    fn spawn(self, mut input_receiver: Receiver<In>) -> (Receiver<Out>, JoinHandle<()>) {
+    fn spawn(mut self, mut input_receiver: Receiver<In>) -> (Receiver<Out>, JoinHandle<()>) {
         concurrency_base! {
             input_receiver = input_receiver;
             concurrency = self.concurrency;

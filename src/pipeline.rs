@@ -187,7 +187,7 @@ where
     /// ```
     pub fn filter_map<F, Fut, T>(self, map_fn: F, concurrency: Concurrency) -> Pipeline<T>
     where
-        F: Fn(Out) -> Fut + Send + 'static,
+        F: FnMut(Out) -> Fut + Send + 'static,
         Fut: Future<Output = Option<T>> + Send + 'static,
         T: Send + 'static,
         Out: Send + 'static,

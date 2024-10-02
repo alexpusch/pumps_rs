@@ -11,14 +11,14 @@ pub struct MapOkPump<F> {
 
 impl<In, InE, Out, F, Fut> Pump<Result<In, InE>, Result<Out, InE>> for MapOkPump<F>
 where
-    F: Fn(In) -> Fut + Send + 'static,
+    F: FnMut(In) -> Fut + Send + 'static,
     Fut: Future<Output = Out> + Send,
     In: Send + 'static,
     InE: Send + 'static,
     Out: Send + 'static,
 {
     fn spawn(
-        self,
+        mut self,
         mut input_receiver: Receiver<Result<In, InE>>,
     ) -> (Receiver<Result<Out, InE>>, JoinHandle<()>) {
         concurrency_base! {
