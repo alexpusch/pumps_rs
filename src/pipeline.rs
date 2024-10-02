@@ -198,6 +198,27 @@ where
         })
     }
 
+    /// Attach an enumerate pump to the pipeline. Enumerate will add an index to each item in the pipeline.
+    /// The index starts at 0.
+    ///
+    /// # Example
+    /// ```rust
+    /// use pumps::{Pipeline, Concurrency};
+    ///
+    /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
+    /// let (mut output, h) = Pipeline::from_iter(vec![1, 2])
+    ///    .enumerate()
+    ///   .build();
+    ///
+    /// assert_eq!(output.recv().await, Some((0, 1)));
+    /// assert_eq!(output.recv().await, Some((1, 2)));
+    /// assert_eq!(output.recv().await, None);
+    ///
+    /// # });
+    pub fn enumerate(self) -> Pipeline<(usize, Out)> {
+        self.pump(crate::pumps::enumerate::EnumeratePump)
+    }
+
     /// Returns the output receiver and a join handle - a future that resolves when all inner tasks have finished.
     pub fn build(mut self) -> (Receiver<Out>, BoxFuture<'static, Result<(), JoinError>>) {
         let join_result = async move {
