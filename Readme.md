@@ -3,7 +3,7 @@
 Eager streams for Rust. If a stream allows water to flow down the hill, a pump forces it up.
 
 [![Crates.io](https://img.shields.io/crates/v/pumps)](https://crates.io/crates/pumps)
-[![Documentation](https://docs.rs/pumps/badge.svg)](docs)
+[![Documentation](https://docs.rs/pumps/badge.svg)](https://docs.rs/pumps)
 
 [Futures stream api](https://docs.rs/futures/latest/futures/stream/index.html#) is awesome, but has unfortunate issues
 
