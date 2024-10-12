@@ -5,6 +5,10 @@ Eager streams for Rust. If a stream allows water to flow down the hill, a pump f
 [![Crates.io](https://img.shields.io/crates/v/pumps)](https://crates.io/crates/pumps)
 [![Documentation](https://docs.rs/pumps/badge.svg)](https://docs.rs/pumps)
 
+<p align="center">
+    <img src="https://github.com/user-attachments/assets/1b01e3a8-f1a6-47dd-8f0e-804ff3c9a32a">
+</p>
+
 [Futures stream api](https://docs.rs/futures/latest/futures/stream/index.html#) is awesome, but has unfortunate issues
 
 - Futures run in surprising and unintuitive order. Read about [Barbara battles buffered streams](https://rust-lang.github.io/wg-async/vision/submitted_stories/status_quo/barbara_battles_buffered_streams.html)
@@ -103,3 +107,38 @@ Backpressure defines the amount of unconsumed data can accumulate in memory. Wit
 The `.backpressure(n)` definition limits the output channel of a `Pump` allowing it to stop processing data until the output channel have been consumed.
 
 The default backpressure is equal to the concurrency number
+
+### Visual comparison with streams
+To understand the difference in concurrency characteristics between Pumps and Stream lets visualize similar pipelines in both frameworks.
+We will visualize a series of 3 ordered concurrent async jobs. Each square in the animation represents a single unit of work that flows between the different pipeline stages. For a deeper dive into the visualization check out this [blog post](https://github.com/alexpusch/rust-magic-patterns/blob/master/rust-stream-visualized/Readme.md)
+
+With streams the pipeline looks something like:
+```rust
+input_stream
+  .map(async_job)
+  .buffered(3)
+  .map(async_job)
+  .buffered(3)
+  .map(longer_async_job)
+  .buffered(2)
+```
+<p align="center">
+    <img src="https://github.com/user-attachments/assets/07ef26e4-5d7b-482e-a38c-9499ae51088c">
+</p>
+
+With Pumps it looks like:
+```rust
+pumps::Pipeline::from_iter(input)
+    .map(async_job, Concurrency::concurrent_ordered(3))
+    .map(async_job, Concurrency::concurrent_ordered(3))
+    .map(longer_async_job, Concurrency::concurrent_ordered(2))
+    .build();
+```
+<p align="center">
+    <img src="https://github.com/user-attachments/assets/1b01e3a8-f1a6-47dd-8f0e-804ff3c9a32a">
+</p>
+
+main differences:
+- Using streams, futures from different stages of the pipeline do not run concurrently. Using Pumps everything runs concurrently.
+- Using streams, each stage waits for a downstream method to `poll_next` it before taking new work. Using Pumps each stage takes new jobs eagerly.
+- Pumps allows for a configurable backpressure. The effect of this can be seen when a heavy task is slow to take new work. The previous stages continue to work until it accumulates `backpressure` number of results. 
