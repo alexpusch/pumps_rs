@@ -7,7 +7,7 @@ macro_rules! concurrency_base {
         on_input($input_var_name:ident, $in_progress_var_name:ident) => $input:block,
         on_progress($output_var_name:ident, $output_sender_var_name:ident) => $output:block) => {
            { let ($output_sender_var_name, output_receiver) =
-                tokio::sync::mpsc::channel($concurrency_var_name.backpressure);
+                tokio::sync::mpsc::channel(1);
 
             let join_handle = tokio::spawn(async move {
                 let mut $in_progress_var_name = $crate::concurrency::FuturesContainer::new($concurrency_var_name.preserve_order);
@@ -183,7 +183,6 @@ mod test {
                 in_progress.push_back(f);
             },
             on_progress(output, output_sender) => {
-                println!("on progress inner");
                 if let Err(_e) = output_sender.send(output).await {
                     break;
                 }
@@ -197,50 +196,10 @@ mod test {
 
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
-        // 4 did not run, as there is no more space in the output channel
+        // 3, 4 did not run, as there is no more space in the output channel
         assert!(timings.is_completed(1).await);
         assert!(timings.is_completed(2).await);
-        assert!(timings.is_completed(3).await);
+        assert!(!timings.is_completed(3).await);
         assert!(!timings.is_completed(4).await);
-    }
-
-    #[tokio::test]
-    async fn concurrency_2_ordered_backpressure_3() {
-        let concurrency = Concurrency::concurrent_ordered(2).backpressure(3);
-        let (input_sender, mut input_receiver) = mpsc::channel(100);
-
-        let timings = FutureTimings::new();
-
-        let map_fn = timings.get_tracked_fn(|value| value.id);
-
-        let (_output_receiver, _join_handle) = concurrency_base! {
-            input_receiver = input_receiver;
-            concurrency = concurrency;
-
-            on_input(input, in_progress) => {
-                let f = map_fn(input);
-                in_progress.push_back(f);
-            },
-            on_progress(output, output_sender) => {
-                println!("on progress inner");
-                if let Err(_e) = output_sender.send(output).await {
-                    break;
-                }
-            }
-        };
-
-        input_sender.send(TestValue::new(1, 10)).await.unwrap();
-        input_sender.send(TestValue::new(2, 10)).await.unwrap();
-        input_sender.send(TestValue::new(3, 10)).await.unwrap();
-        input_sender.send(TestValue::new(4, 10)).await.unwrap();
-
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        timings.debug().await;
-
-        // 4 will run, as there is space in the output channel thanks to backpressure
-        assert!(timings.is_completed(1).await);
-        assert!(timings.is_completed(2).await);
-        assert!(timings.is_completed(3).await);
-        assert!(timings.is_completed(4).await);
     }
 }
