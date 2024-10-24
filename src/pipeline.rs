@@ -34,7 +34,8 @@ use crate::{
 /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
 /// let (mut output, h) = Pipeline::from_iter(vec![1, 2, 3, 4, 5])
 ///     .filter_map(|x| async move { (x %2 == 0).then_some(x)}, Concurrency::concurrent_ordered(8))
-///     .map(|x| async move { x * 2 }, Concurrency::concurrent_ordered(8).backpressure(100))
+///     .map(|x| async move { x * 2 }, Concurrency::concurrent_ordered(8))
+///     .backpressure(100)
 ///     .map(|x| async move { x + 1 }, Concurrency::serial())
 ///     .build();
 ///
@@ -230,6 +231,20 @@ where
         self.pump(crate::pumps::take::TakePump { n })
     }
 
+    /// Attach backpressure to the pipeline. Backpressure will buffer up to `n` items between two pumps in the pipeline.
+    /// When a downstream operation slows down, backpressure will allow some items to accumulate, tempreraly preventing upstream blocking.
+    pub fn backpressure(self, n: usize) -> Pipeline<Out> {
+        self.pump(crate::pumps::backpressure::Backpressure { n })
+    }
+
+    /// Attach backpressure with relief valve to the pipeline. Backpressure will buffer up to `n` items between two pumps in the pipeline.
+    /// When `n` items are buffered, the relief valve will start dropping the oldest items, buffering only the most recent ones.
+    /// When a downstream operation slows down, backpressure with relief valve will allow recent items to accumulate, preventing upstream blocking
+    /// in the costs of dropped data.
+    pub fn backpressure_with_relief_valve(self, n: usize) -> Pipeline<Out> {
+        self.pump(crate::pumps::backpressure_with_relief_valve::BackpressureWithReliefValve { n })
+    }
+
     /// Returns the output receiver and a join handle - a future that resolves when all inner tasks have finished.
     pub fn build(mut self) -> (Receiver<Out>, BoxFuture<'static, Result<(), JoinError>>) {
         let join_result = async move {
@@ -259,7 +274,7 @@ where
     Out: Send + Sync + 'static,
 {
     /// Given a pipeline of pipelines, flatten it into a single pipeline.
-    /// Ordering and backpressure is controlled by the [FlattenConcurrency] parameter.
+    /// Ordering is controlled by the [FlattenConcurrency] parameter.
     ///
     /// # Example
     /// ```rust
@@ -377,10 +392,9 @@ mod tests {
         let (input_sender, input_receiver) = mpsc::channel(100);
 
         let pipeline = Pipeline::from(input_receiver)
-            .map(
-                async_job,
-                Concurrency::concurrent_unordered(2).backpressure(100),
-            )
+            .map(async_job, Concurrency::concurrent_unordered(2))
+            .backpressure(100)
+            .map(async_job, Concurrency::concurrent_unordered(2))
             .filter_map(async_filter_map, Concurrency::serial());
 
         let (mut output_receiver, join_handle) = pipeline.build();
@@ -403,10 +417,8 @@ mod tests {
         let (input_sender, input_receiver) = mpsc::channel(100);
 
         let (mut output_receiver, join_handle) = Pipeline::from(input_receiver)
-            .map(
-                async_job,
-                Concurrency::concurrent_unordered(2).backpressure(100),
-            )
+            .map(async_job, Concurrency::concurrent_unordered(2))
+            .backpressure(100)
             .map(
                 |x| async move {
                     if x == 2 {
@@ -415,7 +427,7 @@ mod tests {
 
                     x
                 },
-                Concurrency::concurrent_unordered(2).backpressure(100),
+                Concurrency::concurrent_unordered(2),
             )
             .build();
 

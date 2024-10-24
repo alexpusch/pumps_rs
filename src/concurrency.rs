@@ -12,17 +12,12 @@ use futures::{
 /// ```rust
 /// use pumps::Concurrency;
 ///
-/// // define a concurrent operation with 10 concurrent futures with backpressure of 100
-/// let concurrency = Concurrency::concurrent_ordered(10).backpressure(100);
+/// // define a concurrent operation with 10 concurrent futures that retains order
+/// let concurrency = Concurrency::concurrent_ordered(10);
 /// ```
 pub struct Concurrency {
     /// How many futures can be run concurrently in the configured operation
     pub concurrency: usize,
-    /// How many future results can be stored in memory before a consumer receives them from the output channel.
-    /// In other words, this is the size of the output channel.
-    /// When the output channel is full, the operation will stop processing additioanl data
-    /// Defaults to the concurrency number
-    pub backpressure: usize,
     /// whether to preserve the order of the input stream
     pub preserve_order: bool,
 }
@@ -32,7 +27,6 @@ impl Concurrency {
     pub fn concurrent_unordered(concurrency: usize) -> Self {
         Self {
             concurrency,
-            backpressure: concurrency,
             preserve_order: false,
         }
     }
@@ -41,7 +35,6 @@ impl Concurrency {
     pub fn concurrent_ordered(concurrency: usize) -> Self {
         Self {
             concurrency,
-            backpressure: concurrency,
             preserve_order: true,
         }
     }
@@ -50,17 +43,7 @@ impl Concurrency {
     pub fn serial() -> Self {
         Self {
             concurrency: 1,
-            backpressure: 1,
             preserve_order: true,
-        }
-    }
-
-    /// How many futures can be stored in memory before a consumer takes them from the output channel
-    /// (default = concurrency)
-    pub fn backpressure(self, backpressure: usize) -> Self {
-        Self {
-            backpressure,
-            ..self
         }
     }
 }
