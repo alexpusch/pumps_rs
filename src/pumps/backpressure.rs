@@ -20,7 +20,7 @@ where
 
         let h = tokio::spawn(async move {
             while let Some(input) = input_receiver.recv().await {
-                if let Err(_) = output_sender.send(input).await {
+                if let Err(_e) = output_sender.send(input).await {
                     break;
                 }
             }

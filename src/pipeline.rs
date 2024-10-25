@@ -103,6 +103,7 @@ where
     }
 
     /// Construct a [`Pipeline`] from an [`IntoIterator`]
+    #[allow(clippy::should_implement_trait)] // Clippy suggests implementing `FromIterator` or choosing a less ambiguous method name
     pub fn from_iter<I>(iter: I) -> Self
     where
         I: IntoIterator<Item = Out> + Send + 'static,
