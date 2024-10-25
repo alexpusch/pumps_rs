@@ -115,6 +115,7 @@ impl FutureTimings {
         }
     }
 
+    #[allow(unused)]
     pub async fn debug(&self) {
         let timings = self.0.lock().await;
 

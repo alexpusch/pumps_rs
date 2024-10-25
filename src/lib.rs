@@ -21,9 +21,10 @@
 //! # async fn save_to_db(json: String) -> String { json }
 //! # let urls:Vec<String> = Vec::new();
 //! let (mut output_receiver, join_handle) = Pipeline::from_iter(urls)
-//!     .map(get_json, Concurrency::concurrent_ordered(5).backpressure(100))
+//!     .map(get_json, Concurrency::concurrent_ordered(5))
+//!     .backpressure(100)
 //!     .map(download_heavy_resource, Concurrency::serial())
-//!     .filter_map(run_algorithm, Concurrency::concurrent_unordered(5).backpressure(10))
+//!     .filter_map(run_algorithm, Concurrency::concurrent_unordered(5))
 //!     .map(save_to_db, Concurrency::concurrent_unordered(100))
 //!     .build();
 //!
@@ -97,11 +98,11 @@
 //!
 //! #### Backpressure
 //!
-//! Backpressure defines the amount of unconsumed data can accumulate in memory. Without back pressure an eger operation will keep processing data and storing it in memory. A slow downstream consumer will result with unbounded memory usage.
+//! Backpressure defines the amount of unconsumed data that can accumulate in memory. Without backpressure an eger operation will keep processing data and storing it in memory. A slow downstream consumer will result with unbounded memory usage. On the other hand, if we limit the in-memory buffering to 1, slow downstream consumer will often hang processing and introduce inefficiencies to the pipeline.
+//! By default, the output channels of the various supplied pumps are with buffer size 1. Adding backpressure before potentially slow operations can improve processing efficiency.
 //!
-//! The `.backpressure(n)` definition limits the output channel of a `Pump` allowing it to stop processing data until the output channel have been consumed.
-//!
-//! The default backpressure is equal to the concurrency number
+//! The `.backpressure(n)` operation limits the output channel of a `Pump` allowing it to stop processing data until the output channel have been consumed.
+//! The `.backpressure_with_relief_valve(n)` operation is similar to `backpressure(n)` but instead of blocking the input channel it drops the oldest inputs.
 
 mod concurrency;
 mod concurrency_base;
