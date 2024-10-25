@@ -223,6 +223,8 @@ where
 
     /// Attach a batch pump to the pipeline. Batch will collect `n` items in the pipeline and emit a `Vec`.
     ///
+    /// While the buffer is not full, no items will be emitted. If the pipeline input is finite, the last item emitted will be partial.
+    ///
     /// # Example
     /// ```rust
     /// use pumps::Pipeline;
@@ -237,7 +239,7 @@ where
     /// //...
     /// # });
     pub fn batch(self, n: usize) -> Pipeline<Vec<Out>> {
-        self.pump(crate::pumps::batch::BatchPump::new(n))
+        self.pump(crate::pumps::batch::BatchPump { n })
     }
 
     /// Attach a skip pump to the pipeline. Skip will skip the first `n` items in the pipeline.

@@ -5,39 +5,31 @@ use tokio::{
 
 use crate::Pump;
 
-pub struct BatchPump<T> {
+pub struct BatchPump {
     pub(crate) n: usize,
-    batch: Vec<T>,
 }
 
-impl<T> BatchPump<T> {
-    pub fn new(n: usize) -> Self {
-        Self {
-            n,
-            batch: Vec::with_capacity(n),
-        }
-    }
-}
-
-impl<T> Pump<T, Vec<T>> for BatchPump<T>
+impl<T> Pump<T, Vec<T>> for BatchPump
 where
     T: Send + 'static,
 {
-    fn spawn(mut self, mut input_receiver: Receiver<T>) -> (Receiver<Vec<T>>, JoinHandle<()>) {
+    fn spawn(self, mut input_receiver: Receiver<T>) -> (Receiver<Vec<T>>, JoinHandle<()>) {
         let (output_sender, output_receiver) = mpsc::channel(1);
 
         let h = tokio::spawn(async move {
+            let mut batch = Vec::with_capacity(self.n);
             while let Some(input) = input_receiver.recv().await {
-                self.batch.push(input);
-                if self.batch.len() >= self.n {
-                    let batch = std::mem::replace(&mut self.batch, Vec::with_capacity(self.n));
+                batch.push(input);
+                if batch.len() == self.n {
+                    let batch = std::mem::replace(&mut batch, Vec::with_capacity(self.n));
                     if let Err(_e) = output_sender.send(batch).await {
                         break;
                     }
                 }
             }
-            if !self.batch.is_empty() {
-                let _ = output_sender.send(self.batch).await;
+            if !batch.is_empty() {
+                // Try to send the remaining batch, in case the output channel is still alive.
+                let _ = output_sender.send(batch).await;
             }
         });
 
@@ -65,7 +57,7 @@ mod tests {
 
         assert_eq!(output_receiver.recv().await, Some(vec![1, 2]));
         assert_eq!(output_receiver.recv().await, Some(vec![3, 4]));
-        // waits forever... assert_eq!(output_receiver.recv().await, Some(vec![5]));
+        assert_eq!(output_receiver.len(), 0); // output_receiver.recv() waits forever
         drop(input_sender);
         assert_eq!(output_receiver.recv().await, Some(vec![5]));
         join_handle.await.unwrap();
