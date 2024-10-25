@@ -221,6 +221,25 @@ where
         self.pump(crate::pumps::enumerate::EnumeratePump)
     }
 
+    /// Attach a batch pump to the pipeline. Batch will collect `n` items in the pipeline and emit a `Vec`.
+    ///
+    /// # Example
+    /// ```rust
+    /// use pumps::Pipeline;
+    ///
+    /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
+    /// let (mut output, h) = Pipeline::from_iter(vec![1, 2, 3, 4, 5])
+    ///   .batch(2)
+    ///   .build();
+    ///
+    /// assert_eq!(output.recv().await, Some(vec![1, 2]));
+    /// assert_eq!(output.recv().await, Some(vec![3, 4]));
+    /// //...
+    /// # });
+    pub fn batch(self, n: usize) -> Pipeline<Vec<Out>> {
+        self.pump(crate::pumps::batch::BatchPump::new(n))
+    }
+
     /// Attach a skip pump to the pipeline. Skip will skip the first `n` items in the pipeline.
     pub fn skip(self, n: usize) -> Pipeline<Out> {
         self.pump(crate::pumps::skip::SkipPump { n })
