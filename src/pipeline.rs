@@ -236,7 +236,8 @@ where
     ///
     /// assert_eq!(output.recv().await, Some(vec![1, 2]));
     /// assert_eq!(output.recv().await, Some(vec![3, 4]));
-    /// //...
+    /// assert_eq!(output.recv().await, Some(vec![5]));
+    /// assert_eq!(output.recv().await, None);
     /// # });
     pub fn batch(self, n: usize) -> Pipeline<Vec<Out>> {
         self.pump(crate::pumps::batch::BatchPump { n })
