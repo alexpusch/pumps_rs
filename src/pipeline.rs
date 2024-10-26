@@ -103,6 +103,7 @@ where
     }
 
     /// Construct a [`Pipeline`] from an [`IntoIterator`]
+    #[allow(clippy::should_implement_trait)] // Clippy suggests implementing `FromIterator` or choosing a less ambiguous method name
     pub fn from_iter<I>(iter: I) -> Self
     where
         I: IntoIterator<Item = Out> + Send + 'static,
@@ -219,6 +220,28 @@ where
     /// # });
     pub fn enumerate(self) -> Pipeline<(usize, Out)> {
         self.pump(crate::pumps::enumerate::EnumeratePump)
+    }
+
+    /// Attach a batch pump to the pipeline. Batch will collect `n` items in the pipeline and emit a `Vec`.
+    ///
+    /// While the buffer is not full, no items will be emitted. If the pipeline input is finite, the last item emitted will be partial.
+    ///
+    /// # Example
+    /// ```rust
+    /// use pumps::Pipeline;
+    ///
+    /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
+    /// let (mut output, h) = Pipeline::from_iter(vec![1, 2, 3, 4, 5])
+    ///   .batch(2)
+    ///   .build();
+    ///
+    /// assert_eq!(output.recv().await, Some(vec![1, 2]));
+    /// assert_eq!(output.recv().await, Some(vec![3, 4]));
+    /// assert_eq!(output.recv().await, Some(vec![5]));
+    /// assert_eq!(output.recv().await, None);
+    /// # });
+    pub fn batch(self, n: usize) -> Pipeline<Vec<Out>> {
+        self.pump(crate::pumps::batch::BatchPump { n })
     }
 
     /// Attach a skip pump to the pipeline. Skip will skip the first `n` items in the pipeline.
