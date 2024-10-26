@@ -1,7 +1,9 @@
 name: "Test Suite"
 on:
-  push:
   pull_request:
+
+env:
+  RUSTFLAGS: "-Dwarnings"
 
 jobs:
   test:
@@ -24,3 +26,11 @@ jobs:
           components: rustfmt
       - name: Rustfmt Check
         uses: actions-rust-lang/rustfmt@v1
+  
+  clippy_check:
+    name: clippy check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Clippy
+        run: cargo clippy --all-targets --all-features
