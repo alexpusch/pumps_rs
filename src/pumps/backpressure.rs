@@ -32,8 +32,9 @@ where
 
 #[cfg(test)]
 mod test {
-    use std::time::Duration;
     use tokio::sync::mpsc;
+
+    use crate::test_utils::wait_for_capacity;
 
     #[tokio::test]
     async fn backpressure_buffers_1_input_at_a_time() {
@@ -87,11 +88,6 @@ mod test {
         let (mut output_receiver, join_handle) = crate::Pipeline::from(input_receiver)
             .backpressure(2)
             .build();
-
-        async fn wait_for_capacity(sender: &mpsc::Sender<i32>) -> usize {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-            sender.capacity()
-        }
 
         input_sender.send(1).await.unwrap(); // this arrives to the output channel
         assert_eq!(wait_for_capacity(&input_sender).await, 1);

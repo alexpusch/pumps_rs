@@ -1,6 +1,7 @@
 pub(crate) mod backpressure;
 pub(crate) mod backpressure_with_relief_valve;
 pub(crate) mod batch;
+pub(crate) mod batch_while_with_expiry;
 pub(crate) mod enumerate;
 pub(crate) mod filter_map;
 pub(crate) mod flatten;

@@ -44,7 +44,7 @@ mod tests {
     use crate::Pipeline;
 
     #[tokio::test]
-    async fn batch_works() {
+    async fn batch_batches_n_items() {
         let (input_sender, input_receiver) = mpsc::channel(100);
 
         let (mut output_receiver, join_handle) = Pipeline::from(input_receiver).batch(2).build();

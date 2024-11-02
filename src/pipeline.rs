@@ -1,6 +1,10 @@
 use std::future::Future;
 
-use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, Stream, StreamExt};
+use futures::{
+    future::{self, BoxFuture},
+    stream::FuturesUnordered,
+    FutureExt, Stream, StreamExt,
+};
 use tokio::{
     sync::mpsc::{self, Receiver},
     task::{JoinError, JoinHandle},
@@ -242,6 +246,108 @@ where
     /// # });
     pub fn batch(self, n: usize) -> Pipeline<Vec<Out>> {
         self.pump(crate::pumps::batch::BatchPump { n })
+    }
+
+    /// Batch items from the input pipeline while the provided function returns `Some`. Similarly to iterator 'fold' method,
+    /// the function takes a state and an item, and returns a new state. This allows the user to control when to emit a batch
+    /// based on the accumulated state. On batch emission, the state is reset.
+    ///
+    /// If the pipeline input is finite, the last item emitted will be partial.
+    ///
+    /// # Example
+    /// ```rust
+    /// use pumps::Pipeline;
+    /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
+    /// let (mut output, h) = Pipeline::from_iter(vec![1, 2, 3, 4, 5])
+    /// .batch_while(0, |state, x| {
+    ///     let sum = state + x;
+    ///
+    ///     (sum < 10).then_some(sum)
+    /// })
+    ///   .build();
+    ///
+    /// assert_eq!(output.recv().await, Some(vec![1, 2, 3, 4]));
+    /// assert_eq!(output.recv().await, Some(vec![5]));
+    /// assert_eq!(output.recv().await, None);
+    /// # });
+    pub fn batch_while<F, State>(self, state_init: State, mut while_fn: F) -> Pipeline<Vec<Out>>
+    where
+        F: FnMut(State, &Out) -> Option<State> + Send + 'static,
+        State: Send + Clone + 'static,
+    {
+        self.pump(
+            crate::pumps::batch_while_with_expiry::BatchWhileWithExpiryPump {
+                state_init,
+                while_fn: move |state: State, x: &Out| {
+                    let new_state = while_fn(state.clone(), x);
+                    new_state.map(|new_state| (new_state, future::pending()))
+                },
+            },
+        )
+    }
+
+    /// Batch items from the input pipeline while the provided function returns `Some`. Similarly to iterator 'fold' method,
+    /// the function takes a state and an item, and returns a new state. This allows the user to control when to emit a batch
+    /// based on the accumulated state.
+    ///
+    /// This variant of batch allows the user to return a future aside from the new batch state. If this future resovles
+    /// before the batch is emitted, the batch will be emitted, and the state will be reset. Only the most
+    /// recent future is considered. For example, this feature can be used to implement a timeout for the batch.
+    ///
+    /// If the pipeline input is finite, the last item emitted will be partial.
+    ///
+    /// # Example
+    /// ```rust
+    /// use pumps::Pipeline;
+    /// use std::time::Duration;
+    /// use tokio::{time::sleep, sync::mpsc};
+    ///
+    /// # async fn send(input_sender: &mpsc::Sender<i32>, data: Vec<i32>) {
+    /// #   for x in data {
+    /// #       input_sender.send(x).await.unwrap();
+    /// #   }
+    /// # }
+    ///
+    /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
+    /// let (input_sender, input_receiver) = mpsc::channel(100);
+    ///
+    /// let (mut output, h) = Pipeline::from(input_receiver)
+    /// .batch_while_with_expiry(0, |state, x| {
+    ///     let sum = state + x;
+    ///
+    ///     // batch until accumulated sum of 10, or 100ms passed without activity
+    ///     (sum < 10).then_some((sum, sleep(Duration::from_millis(100))))
+    /// })
+    ///   .build();
+    ///
+    /// send(&input_sender, vec![1,2]).await;
+    ///
+    /// sleep(Duration::from_millis(200)).await;
+    ///
+    /// assert_eq!(output.recv().await, Some(vec![1, 2]));
+    ///
+    /// send(&input_sender, vec![3, 3, 4]).await;
+    /// assert_eq!(output.recv().await, Some(vec![3, 3, 4]));
+    ///
+    /// drop(input_sender);
+    /// assert_eq!(output.recv().await, None);
+    /// # });
+    pub fn batch_while_with_expiry<F, Fut, State>(
+        self,
+        state_init: State,
+        while_fn: F,
+    ) -> Pipeline<Vec<Out>>
+    where
+        F: FnMut(State, &Out) -> Option<(State, Fut)> + Send + 'static,
+        Fut: Future<Output = ()> + Send,
+        State: Send + Clone + 'static,
+    {
+        self.pump(
+            crate::pumps::batch_while_with_expiry::BatchWhileWithExpiryPump {
+                state_init,
+                while_fn,
+            },
+        )
     }
 
     /// Attach a skip pump to the pipeline. Skip will skip the first `n` items in the pipeline.
