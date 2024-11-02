@@ -132,7 +132,44 @@ where
     }
 
     /// attach an additional `Pump` to the pipeline
-    /// This method can be used to create custom `Pump` oprations
+    /// This method can be used to create custom `Pump` operations
+    ///
+    /// # Example:
+    /// ```rust
+    /// use pumps::{Pipeline, Pump};
+    /// use tokio::{sync::mpsc::{self, Receiver}, task::JoinHandle};
+    ///
+    /// pub struct PassThroughPump;
+    /// impl<In> Pump<In, In> for PassThroughPump
+    /// where
+    ///     In: Send + Sync + Clone + 'static,
+    /// {
+    ///     fn spawn(self, mut input_receiver: Receiver<In>) -> (Receiver<In>, JoinHandle<()>) {
+    ///         let (output_sender, output_receiver) = mpsc::channel(1);
+    ///
+    ///         let h = tokio::spawn(async move {
+    ///             while let Some(input) = input_receiver.recv().await {
+    ///                 if let Err(_e) = output_sender.send(input.clone()).await {
+    ///                     break;
+    ///                 }
+    ///             }
+    ///         });
+    ///
+    ///         (output_receiver, h)
+    ///     }
+    /// }
+    ///
+    /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
+    /// let (mut output, h) = Pipeline::from_iter(vec![1, 2, 3])
+    ///     .pump(PassThroughPump)
+    ///     .build();
+    ///
+    /// assert_eq!(output.recv().await, Some(1));
+    /// assert_eq!(output.recv().await, Some(2));
+    /// assert_eq!(output.recv().await, Some(3));
+    /// assert_eq!(output.recv().await, None);
+    /// # });
+    /// ```
     pub fn pump<P, T>(self, pump: P) -> Pipeline<T>
     where
         P: Pump<Out, T>,
@@ -621,5 +658,49 @@ mod tests {
         assert_eq!(output_receiver.recv().await, Some(3));
 
         assert_eq!(output_receiver.recv().await, None);
+    }
+
+    #[tokio::test]
+    async fn test_custom_pump() {
+        pub struct CustomPump;
+
+        impl<In> Pump<In, In> for CustomPump
+        where
+            In: Send + Sync + Clone + 'static,
+        {
+            fn spawn(self, mut input_receiver: Receiver<In>) -> (Receiver<In>, JoinHandle<()>) {
+                let (output_sender, output_receiver) = mpsc::channel(1);
+
+                let h = tokio::spawn(async move {
+                    while let Some(input) = input_receiver.recv().await {
+                        if let Err(_e) = output_sender.send(input.clone()).await {
+                            break;
+                        }
+
+                        if let Err(_e) = output_sender.send(input).await {
+                            break;
+                        }
+                    }
+                });
+
+                (output_receiver, h)
+            }
+        }
+
+        let (input_sender, input_receiver) = mpsc::channel(100);
+
+        let (mut output_receiver, join_handle) =
+            Pipeline::from(input_receiver).pump(CustomPump).build();
+
+        input_sender.send(1).await.unwrap();
+
+        assert_eq!(output_receiver.recv().await, Some(1));
+        assert_eq!(output_receiver.recv().await, Some(1));
+
+        drop(input_sender);
+
+        assert_eq!(output_receiver.recv().await, None);
+
+        join_handle.await.unwrap();
     }
 }

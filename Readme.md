@@ -23,7 +23,7 @@ Main features:
 - Designed for common async pipelining needs in heart
 - Explicit concurrency, ordering, and backpressure control
 - Eager - work is done before downstream methods consumes it
-- builds on top of Rust async tools as tasks and channels.
+- Builds on top of Rust async tools as tasks and channels.
 - For now only supports the Tokio async runtime
 - TBA
     - [ ] additional operators
