@@ -2,7 +2,7 @@
 name = "pumps"
 description = "Eager streams for Rust"
 keywords = ["async", "pipeline"]
-version = "0.0.3"
+version = "0.0.4"
 edition = "2021"
 license-file = "LICENSE-MIT"
 homepage = "https://github.com/alexpusch/pumps_rs"
