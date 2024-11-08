@@ -7,7 +7,7 @@
 //! - Designed with common async pipelining needs in heart
 //! - Explicit concurrency, ordering, and backpressure control
 //! - Eager - work is done before downstream methods consumes it
-//! - builds on top of Rust async tools as tasks and channels.
+//! - Builds on top of Rust async tools as tasks and channels.
 //! - For now only supports the Tokio async runtime
 //!
 //! Example:
@@ -88,7 +88,7 @@
 //! # });
 //! ```
 //!
-//! The `.build()` method returns a touple of a `tokio::sync::mpsc::Receiver` and a join handle to the internally spawned tasks
+//! The `.build()` method returns a tuple of a `tokio::sync::mpsc::Receiver` and a join handle to the internally spawned tasks
 //!
 //! ### Concurrency control
 //!
@@ -98,12 +98,65 @@
 //!
 //! #### Backpressure
 //!
-//! Backpressure defines the amount of unconsumed data that can accumulate in memory. Without backpressure an eger operation will keep processing data and storing it in memory. A slow downstream consumer will result with unbounded memory usage. On the other hand, if we limit the in-memory buffering to 1, slow downstream consumer will often hang processing and introduce inefficiencies to the pipeline.
+//! Backpressure defines the amount of unconsumed data that can accumulate in memory. Without backpressure an eager operation will keep processing data and storing it in memory. A slow downstream consumer will result with unbounded memory usage. On the other hand, if we limit the in-memory buffering to 1, slow downstream consumer will often hang processing and introduce inefficiencies to the pipeline.
 //! By default, the output channels of the various supplied pumps are with buffer size 1. Adding backpressure before potentially slow operations can improve processing efficiency.
 //!
-//! The `.backpressure(n)` operation limits the output channel of a `Pump` allowing it to stop processing data until the output channel have been consumed.
+//! The `.backpressure(n)` operation limits the output channel of a `Pump` allowing it to stop processing data until the output channel has been consumed.
 //! The `.backpressure_with_relief_valve(n)` operation is similar to `backpressure(n)` but instead of blocking the input channel it drops the oldest inputs.
-
+//!
+//! ### Panic handling
+//! As described before, each pump wraps a spawned task. A panic in the task will result in the termination of the task and the pipeline. The panic can be caught by the join handle.
+//!
+//! ```rust
+//! use pumps::{Pipeline, Concurrency};
+//!
+//! # tokio::runtime::Runtime::new().unwrap().block_on(async {
+//! let (mut output, h) = Pipeline::from_iter(vec![1, 2, 3])
+//!     .map(|x| async move { panic!("oh no") }, Concurrency::serial())
+//!     .build();
+//!
+//! assert_eq!(output.recv().await, None);
+//! assert!(h.await.is_err());
+//! # });
+//! ```
+//!
+//! ### Custom Pumps
+//! Custom pumps can be created by implementing the `Pump` trait, and using the `.pump()` method. For example:
+//!
+//! ```rust
+//! use pumps::{Pipeline, Pump};
+//! use tokio::{sync::mpsc::{self, Receiver}, task::JoinHandle};
+//!
+//! pub struct PassThroughPump;
+//! impl<In> Pump<In, In> for PassThroughPump
+//! where
+//!     In: Send + Sync + Clone + 'static,
+//! {
+//!     fn spawn(self, mut input_receiver: Receiver<In>) -> (Receiver<In>, JoinHandle<()>) {
+//!         let (output_sender, output_receiver) = mpsc::channel(1);
+//!
+//!         let h = tokio::spawn(async move {
+//!             while let Some(input) = input_receiver.recv().await {
+//!                 if let Err(_e) = output_sender.send(input.clone()).await {
+//!                     break;
+//!                 }
+//!             }
+//!         });
+//!
+//!         (output_receiver, h)
+//!     }
+//! }
+//!
+//! # tokio::runtime::Runtime::new().unwrap().block_on(async {
+//! let (mut output, h) = Pipeline::from_iter(vec![1, 2, 3])
+//!     .pump(PassThroughPump)
+//!     .build();
+//!
+//! assert_eq!(output.recv().await, Some(1));
+//! assert_eq!(output.recv().await, Some(2));
+//! assert_eq!(output.recv().await, Some(3));
+//! assert_eq!(output.recv().await, None);
+//! # });
 mod concurrency;
 mod concurrency_base;
 mod pipeline;
