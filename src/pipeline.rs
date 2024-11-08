@@ -1,6 +1,10 @@
 use std::future::Future;
 
-use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, Stream, StreamExt};
+use futures::{
+    future::{self, BoxFuture},
+    stream::FuturesUnordered,
+    FutureExt, Stream, StreamExt,
+};
 use tokio::{
     sync::mpsc::{self, Receiver},
     task::{JoinError, JoinHandle},
@@ -128,7 +132,8 @@ where
     }
 
     /// attach an additional `Pump` to the pipeline
-    /// This method can be used to create custom `Pump` oprations
+    /// This method can be used to create custom `Pump` operations
+    /// ```
     pub fn pump<P, T>(self, pump: P) -> Pipeline<T>
     where
         P: Pump<Out, T>,
@@ -143,7 +148,9 @@ where
         }
     }
 
-    /// Attach a map pump to the pipeline. Map will apply the provided function to each item.
+    /// Apply the provided async map function on each item recieved from pipeline. The Future returned
+    /// from the map function is executed concurrently according to the [Concurrency] configuration.
+    /// The results of the executed futures is sent as output.
     ///
     /// # Example
     /// ```rust
@@ -173,7 +180,10 @@ where
         })
     }
 
-    /// Attach a filter_map pump to the pipeline. Filter map will apply the provided function to each item, removing items that avaluate to None from the pipeline.
+    /// Apply the provided async filter map function on each item recieved from the pipeline. The Future returned
+    /// from the filter map function is executed concurrently according to the [Concurrency] configuration.
+    /// If the invocation results in None the triggering item will be removed from the pipeline, otherwise the result
+    /// will be sent as output.
     ///
     /// # Example
     /// ```rust
@@ -201,7 +211,7 @@ where
         })
     }
 
-    /// Attach an enumerate pump to the pipeline. Enumerate will add an index to each item in the pipeline.
+    /// Transform each item in the pipeline into a tuple of the item and its index according to the arrival order.
     /// The index starts at 0.
     ///
     /// # Example
@@ -222,9 +232,8 @@ where
         self.pump(crate::pumps::enumerate::EnumeratePump)
     }
 
-    /// Attach a batch pump to the pipeline. Batch will collect `n` items in the pipeline and emit a `Vec`.
-    ///
-    /// While the buffer is not full, no items will be emitted. If the pipeline input is finite, the last item emitted will be partial.
+    /// Batch items from the input pipeline into a vector of at most `n` items. While the buffer is not full,
+    /// no batches will be emitted. If the pipeline input is finite, the last batch emitted will be partial.
     ///
     /// # Example
     /// ```rust
@@ -244,23 +253,146 @@ where
         self.pump(crate::pumps::batch::BatchPump { n })
     }
 
-    /// Attach a skip pump to the pipeline. Skip will skip the first `n` items in the pipeline.
+    /// Batch items from the input pipeline while the provided function returns `Some`. Similarly to iterator 'fold' method,
+    /// the function takes a state and the current item and returns a new state. This allows the user to control when to emit a batch
+    /// based on the accumulated state. On batch emission, the state is reset.
+    ///
+    /// If the pipeline input is finite, the last item emitted will be partial.
+    ///
+    /// # Example
+    /// ```rust
+    /// use pumps::Pipeline;
+    /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
+    /// let (mut output, h) = Pipeline::from_iter(vec![1, 2, 3, 4, 5])
+    /// // batch until accumulated sum of 10
+    /// .batch_while(0, |state, x| {
+    ///     let sum = state + x;
+    ///
+    ///     (sum < 10).then_some(sum)
+    /// })
+    ///   .build();
+    ///
+    /// assert_eq!(output.recv().await, Some(vec![1, 2, 3, 4]));
+    /// assert_eq!(output.recv().await, Some(vec![5]));
+    /// assert_eq!(output.recv().await, None);
+    /// # });
+    pub fn batch_while<F, State>(self, state_init: State, mut while_fn: F) -> Pipeline<Vec<Out>>
+    where
+        F: FnMut(State, &Out) -> Option<State> + Send + 'static,
+        State: Send + Clone + 'static,
+    {
+        self.pump(
+            crate::pumps::batch_while_with_expiry::BatchWhileWithExpiryPump {
+                state_init,
+                while_fn: move |state: State, x: &Out| {
+                    let new_state = while_fn(state.clone(), x);
+                    // no exipry. The future is never resolved
+                    new_state.map(|new_state| (new_state, future::pending()))
+                },
+            },
+        )
+    }
+
+    /// Batch items from the input pipeline while the provided function returns `Some`. Similar to the iterator `fold` method,
+    /// the function takes a state and an item, and returns a new state. This allows the user to control when to emit a batch
+    /// based on the accumulated state.
+    ///
+    /// This variant of batch allows the user to return a future in addition to the new batch state. If this future resolves
+    /// before the batch is emitted, the batch will be emitted, and the state will be reset. Only the most
+    /// recent future is considered. For example, this feature can be used to implement a timeout for the batch.
+    ///
+    /// If the pipeline input is finite, the last batch emitted will be partial.
+    ///
+    /// # Example
+    /// ```rust
+    /// use pumps::Pipeline;
+    /// use std::time::Duration;
+    /// use tokio::{time::sleep, sync::mpsc};
+    ///
+    /// # async fn send(input_sender: &mpsc::Sender<i32>, data: Vec<i32>) {
+    /// #   for x in data {
+    /// #       input_sender.send(x).await.unwrap();
+    /// #   }
+    /// # }
+    /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
+    /// let (input_sender, input_receiver) = mpsc::channel(100);
+    ///
+    /// let (mut output, h) = Pipeline::from(input_receiver)
+    /// .batch_while_with_expiry(0, |state, x| {
+    ///     let sum = state + x;
+    ///
+    ///     // batch until accumulated sum of 10, or 100ms passed without activity
+    ///     (sum < 10).then_some((sum, sleep(Duration::from_millis(100))))
+    /// })
+    ///   .build();
+    ///
+    /// send(&input_sender, vec![1,2]).await;
+    /// sleep(Duration::from_millis(200)).await;
+    /// assert_eq!(output.recv().await, Some(vec![1, 2]));
+    ///
+    /// send(&input_sender, vec![3, 3, 4]).await;
+    /// assert_eq!(output.recv().await, Some(vec![3, 3, 4]));
+    ///
+    /// drop(input_sender);
+    /// assert_eq!(output.recv().await, None);
+    /// # });
+    pub fn batch_while_with_expiry<F, Fut, State>(
+        self,
+        state_init: State,
+        while_fn: F,
+    ) -> Pipeline<Vec<Out>>
+    where
+        F: FnMut(State, &Out) -> Option<(State, Fut)> + Send + 'static,
+        Fut: Future<Output = ()> + Send,
+        State: Send + Clone + 'static,
+    {
+        self.pump(
+            crate::pumps::batch_while_with_expiry::BatchWhileWithExpiryPump {
+                state_init,
+                while_fn,
+            },
+        )
+    }
+
+    /// Skip the first `n` items in the pipeline.
     pub fn skip(self, n: usize) -> Pipeline<Out> {
         self.pump(crate::pumps::skip::SkipPump { n })
     }
 
-    /// Attach a take pump to the pipeline. Take will take the first `n` items in the pipeline.
+    /// Take the first `n` items in the pipeline, removing the rest.
     pub fn take(self, n: usize) -> Pipeline<Out> {
         self.pump(crate::pumps::take::TakePump { n })
     }
 
-    /// Attach backpressure to the pipeline. Backpressure will buffer up to `n` items between two pumps in the pipeline.
+    /// Apply backpressure by bufferring up to `n` items between the previous pump to the next one.
     /// When a downstream operation slows down, backpressure will allow some items to accumulate, tempreraly preventing upstream blocking.
+    ///     
+    /// # Example
+    /// ```rust
+    /// use pumps::{Pipeline, Concurrency};
+    ///
+    /// # async fn mostly_fast_fn(x: i32) -> i32 {
+    /// #   x
+    /// # }
+    /// #
+    /// # async fn sometimes_slow_fn(x: i32) -> i32 {
+    /// #    x
+    /// # }
+    ///
+    /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
+    /// let (mut output, h) = Pipeline::from_iter(vec![1, 2, 3])
+    ///     .map(mostly_fast_fn, Concurrency::serial())
+    ///     // This will allow up to 32 `mostly_fast_fn` results to accumulate while `sometimes_slow_fn` slows down
+    ///     // Without this `mostly_fast_fn` will be idle waiting for `sometimes_slow_fn` to catch up.
+    ///     .backpressure(32)
+    ///     .map(sometimes_slow_fn, Concurrency::serial())
+    ///     .build();
+    /// # });
     pub fn backpressure(self, n: usize) -> Pipeline<Out> {
         self.pump(crate::pumps::backpressure::Backpressure { n })
     }
 
-    /// Attach backpressure with relief valve to the pipeline. Backpressure will buffer up to `n` items between two pumps in the pipeline.
+    /// Apply backpressure by bufferring up to `n` items between the previous pump to the next one, dropping the oldest items when the buffer is full.
     /// When `n` items are buffered, the relief valve will start dropping the oldest items, buffering only the most recent ones.
     /// When a downstream operation slows down, backpressure with relief valve will allow recent items to accumulate, preventing upstream blocking
     /// in the costs of dropped data.
@@ -515,5 +647,49 @@ mod tests {
         assert_eq!(output_receiver.recv().await, Some(3));
 
         assert_eq!(output_receiver.recv().await, None);
+    }
+
+    #[tokio::test]
+    async fn test_custom_pump() {
+        pub struct CustomPump;
+
+        impl<In> Pump<In, In> for CustomPump
+        where
+            In: Send + Sync + Clone + 'static,
+        {
+            fn spawn(self, mut input_receiver: Receiver<In>) -> (Receiver<In>, JoinHandle<()>) {
+                let (output_sender, output_receiver) = mpsc::channel(1);
+
+                let h = tokio::spawn(async move {
+                    while let Some(input) = input_receiver.recv().await {
+                        if let Err(_e) = output_sender.send(input.clone()).await {
+                            break;
+                        }
+
+                        if let Err(_e) = output_sender.send(input).await {
+                            break;
+                        }
+                    }
+                });
+
+                (output_receiver, h)
+            }
+        }
+
+        let (input_sender, input_receiver) = mpsc::channel(100);
+
+        let (mut output_receiver, join_handle) =
+            Pipeline::from(input_receiver).pump(CustomPump).build();
+
+        input_sender.send(1).await.unwrap();
+
+        assert_eq!(output_receiver.recv().await, Some(1));
+        assert_eq!(output_receiver.recv().await, Some(1));
+
+        drop(input_sender);
+
+        assert_eq!(output_receiver.recv().await, None);
+
+        join_handle.await.unwrap();
     }
 }

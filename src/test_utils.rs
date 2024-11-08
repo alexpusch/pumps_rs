@@ -1,7 +1,11 @@
-use std::{collections::HashMap, sync::Arc, time::SystemTime};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 use futures::{future::BoxFuture, FutureExt};
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, Mutex};
 
 pub struct TestValue {
     pub id: i32,
@@ -144,4 +148,14 @@ impl FutureTimings {
             }
         }
     }
+}
+
+pub async fn wait_for_capacity(sender: &mpsc::Sender<i32>) -> usize {
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    sender.capacity()
+}
+
+pub async fn wait_for_len<T>(receiver: &mpsc::Receiver<T>) -> usize {
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    receiver.len()
 }
