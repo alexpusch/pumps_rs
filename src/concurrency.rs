@@ -55,7 +55,7 @@ impl Default for Concurrency {
 }
 
 /// A wrapper around `FuturesOrdered` and `FuturesUnordered` that allows for a unified interface
-/// and conigureable order
+/// and configurable order
 #[derive(Debug)]
 pub(crate) enum FuturesContainer<T>
 where
