@@ -13,3 +13,9 @@ readme = "Readme.md"
 [dependencies]
 tokio = { version = "1", features = ["full"] }
 futures = "0.3.30"
+
+
+# add a bin target
+[[bin]]
+name = "helloPump"
+path = "examples/fold.rs"
