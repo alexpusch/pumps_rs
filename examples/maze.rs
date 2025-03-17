@@ -36,32 +36,40 @@ where
     }
 }
 
-// tokio async main
 #[tokio::main]
 async fn main() {
-    let maze = "-----------------------";
-    let input = (1..=20).collect::<Vec<_>>();
-    let (mut output_receiver, _h) = Pipeline::from_iter(input)
+    // A simple maze (string) to visualize the current position and obstacles
+    let maze = "-#---#----#------#-----";
+
+    let (mut output_receiver, _h) = Pipeline::from_iter(1..=25)
         .map(
-            // Move 1 step to the right if the number is even
-            |x| async move { x % 2 },
+            // Make some moves
+            |x| async move { x % 3 },
             Concurrency::concurrent_unordered(3),
         )
         .pump(StatePump {
             init_value: 0,
             // Move forward by the number of steps
-            transition_fn: |step: i32, position: i32| async move { step + position },
+            transition_fn: move |step: i32, position: i32| async move {
+                let next_position = position + step;
+                if maze.chars().nth(next_position as usize) == Some('#') {
+                    // Stay if there is an obstacle
+                    position
+                } else {
+                    next_position
+                }
+            },
         })
         .build();
 
     while let Some(output) = output_receiver.recv().await {
         // Mark the current position in the maze as "*"
-        let output = maze
+        let result = maze
             .chars()
             .enumerate()
             .map(|(i, c)| if i == output as usize { '*' } else { c })
             .collect::<String>();
 
-        println!("{output}");
+        println!("{result}");
     }
 }
