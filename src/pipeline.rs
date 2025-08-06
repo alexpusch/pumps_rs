@@ -13,6 +13,7 @@ use tokio::{
 use crate::{
     concurrency::Concurrency,
     pumps::{
+        catch::CatchPump,
         filter_map::FilterMapPump,
         flatten::{FlattenConcurrency, FlattenPump},
         map::MapPump,
@@ -421,6 +422,65 @@ where
         for handle in self.handles {
             handle.abort();
         }
+    }
+}
+
+impl<Err, Out> Pipeline<Result<Out, Err>>
+where
+    Err: Send + Sync + 'static,
+    Out: Send + Sync + 'static,
+{
+    /// Catches errors from a pipeline of [`Result`]s, sending them to a separate channel.
+    ///
+    /// The pipeline will continue processing subsequent items, even after encountering an error.
+    ///
+    /// # Notes
+    /// - Dropping `error_rx` will not stop the pipeline. If we cannot send an error, we ignore it and continue.
+    /// - If the output channel of this pipeline is dropped, we send all errors in the input pipeline to `channel`.
+    ///
+    /// ```rust
+    /// use pumps::Pipeline;
+    /// use tokio::sync::mpsc;
+    ///
+    /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
+    /// let (error_tx, mut error_rx) = mpsc::channel(10);
+    ///
+    /// let (mut output, h) = Pipeline::from_iter(vec![
+    ///     Ok(1),
+    ///     Err("first error"),
+    ///     Ok(2),
+    ///     Err("second error"),
+    ///     Ok(3)
+    /// ])
+    ///     .catch(error_tx)
+    ///     .build();
+    ///
+    /// assert_eq!(output.recv().await, Some(1));
+    /// assert_eq!(output.recv().await, Some(2));
+    /// assert_eq!(output.recv().await, Some(3));
+    /// assert_eq!(output.recv().await, None);
+    ///
+    /// assert_eq!(error_rx.recv().await, Some("first error"));
+    /// assert_eq!(error_rx.recv().await, Some("second error"));
+    /// assert_eq!(error_rx.try_recv().unwrap_err(), mpsc::error::TryRecvError::Disconnected);
+    /// # });
+    /// ```
+    pub fn catch(self, channel: tokio::sync::mpsc::Sender<Err>) -> Pipeline<Out> {
+        self.pump(CatchPump {
+            channel,
+            abort_on_error: false,
+        })
+    }
+
+    /// Catches errors from a pipeline of [`Result`]s, sending them to a separate channel.
+    ///
+    /// This behaves exactly like [`Self::catch`], but processes no items after
+    /// encountering an [`Err`]. This pump will send at most one error to `channel`.
+    pub fn catch_abort(self, channel: tokio::sync::mpsc::Sender<Err>) -> Pipeline<Out> {
+        self.pump(CatchPump {
+            channel,
+            abort_on_error: true,
+        })
     }
 }
 
