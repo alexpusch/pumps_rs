@@ -4,14 +4,16 @@ use tokio::{sync::mpsc::Receiver, task::JoinHandle};
 
 use crate::{concurrency::Concurrency, concurrency_base, Pump};
 
-pub struct MapPump<F> {
+pub struct MapPump<F, Ctx> {
     pub(crate) map_fn: F,
     pub(crate) concurrency: Concurrency,
+    pub(crate) ctx: Ctx,
 }
 
-impl<In, Out, F, Fut> Pump<In, Out> for MapPump<F>
+impl<In, Out, F, Fut, Ctx> Pump<In, Out> for MapPump<F, Ctx>
 where
-    F: FnMut(In) -> Fut + Send + 'static,
+    Ctx: Clone + Send + 'static,
+    F: FnMut(In, Ctx) -> Fut + Send + 'static,
     Fut: Future<Output = Out> + Send,
     In: Send + 'static,
     Out: Send + 'static,
@@ -23,7 +25,7 @@ where
 
 
             on_input(input, in_progress) => {
-                let fut = (self.map_fn)(input);
+                let fut = (self.map_fn)(input, self.ctx.clone());
                 in_progress.push_back(fut);
             },
             on_progress(output, output_sender) => {
@@ -37,17 +39,15 @@ where
 
 #[cfg(test)]
 mod tests {
-
-    use tokio::sync::mpsc;
-
     use crate::Pipeline;
+    use tokio::sync::mpsc;
 
     #[tokio::test]
     async fn map_works() {
         let (input_sender, input_receiver) = mpsc::channel(100);
 
         let (mut output_receiver, join_handle) = Pipeline::from(input_receiver)
-            .map(|x| async move { x * 2 }, Default::default())
+            .map(|x, _| async move { x * 2 }, Default::default())
             .build();
 
         input_sender.send(1).await.unwrap();

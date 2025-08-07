@@ -44,7 +44,7 @@ async fn main() {
     let (mut output_receiver, _h) = Pipeline::from_iter(1..=25)
         .map(
             // Make some moves
-            |x| async move { x % 3 },
+            |x, _| async move { x % 3 },
             Concurrency::concurrent_unordered(3),
         )
         .pump(StatePump {

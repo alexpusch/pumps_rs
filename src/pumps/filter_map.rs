@@ -5,17 +5,22 @@ use crate::{concurrency::Concurrency, concurrency_base};
 
 use super::pump::Pump;
 
-pub struct FilterMapPump<F> {
+pub struct FilterMapPump<F, Ctx>
+where
+    Ctx: Send + Clone + 'static,
+{
     pub(crate) map_fn: F,
     pub(crate) concurrency: Concurrency,
+    pub(crate) ctx: Ctx,
 }
 
-impl<In, Out, F, Fut> Pump<In, Out> for FilterMapPump<F>
+impl<In, Out, F, Fut, Ctx> Pump<In, Out> for FilterMapPump<F, Ctx>
 where
-    F: FnMut(In) -> Fut + Send + 'static,
-    Fut: Future<Output = Option<Out>> + Send,
     In: Send + 'static,
     Out: Send + 'static,
+    Ctx: Send + Clone + 'static,
+    F: FnMut(In, Ctx) -> Fut + Send + 'static,
+    Fut: Future<Output = Option<Out>> + Send,
 {
     fn spawn(mut self, mut input_receiver: Receiver<In>) -> (Receiver<Out>, JoinHandle<()>) {
         concurrency_base! {
@@ -23,7 +28,7 @@ where
             concurrency = self.concurrency;
 
             on_input(input, in_progress) => {
-                let fut = (self.map_fn)(input);
+                let fut = (self.map_fn)(input, self.ctx.clone());
                 in_progress.push_back(fut);
             },
             on_progress(output, output_sender) => {
@@ -50,7 +55,7 @@ mod tests {
 
         let (mut output_receiver, join_handle) = Pipeline::from(input_receiver)
             .filter_map(
-                |x| async move { (x % 2 == 0).then_some(x * 2) },
+                |x, _| async move { (x % 2 == 0).then_some(x * 2) },
                 Default::default(),
             )
             .build();
