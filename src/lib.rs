@@ -9,16 +9,17 @@
 //! - Eager - work is done before downstream methods consumes it
 //! - Builds on top of Rust async tools as tasks and channels.
 //! - For now only supports the Tokio async runtime
+//! - Supports shared state via [`Pipeline::with_context`]
 //!
 //! Example:
 //!
 //! ```rust
 //! use pumps::{Pipeline, Concurrency};
 //! # tokio::runtime::Runtime::new().unwrap().block_on(async {
-//! # async fn get_json(url: String) -> String { url }
-//! # async fn download_heavy_resource(json: String) -> String { json }
-//! # async fn run_algorithm(json: String) -> Option<String> { Some(json) }
-//! # async fn save_to_db(json: String) -> String { json }
+//! # async fn get_json(url: String, _ctx: ()) -> String { url }
+//! # async fn download_heavy_resource(json: String, _ctx: ()) -> String { json }
+//! # async fn run_algorithm(json: String, _ctx: ()) -> Option<String> { Some(json) }
+//! # async fn save_to_db(json: String, _ctx: ()) -> String { json }
 //! # let urls:Vec<String> = Vec::new();
 //! let (mut output_receiver, join_handle) = Pipeline::from_iter(urls)
 //!     .map(get_json, Concurrency::concurrent_ordered(5))
@@ -112,7 +113,7 @@
 //!
 //! # tokio::runtime::Runtime::new().unwrap().block_on(async {
 //! let (mut output, h) = Pipeline::from_iter(vec![1, 2, 3])
-//!     .map(|x| async move { panic!("oh no") }, Concurrency::serial())
+//!     .map(|x, _| async move { panic!("oh no") }, Concurrency::serial())
 //!     .build();
 //!
 //! assert_eq!(output.recv().await, None);

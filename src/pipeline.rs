@@ -37,10 +37,10 @@ use crate::{
 ///
 /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
 /// let (mut output, h) = Pipeline::from_iter(vec![1, 2, 3, 4, 5])
-///     .filter_map(|x| async move { (x %2 == 0).then_some(x)}, Concurrency::concurrent_ordered(8))
-///     .map(|x| async move { x * 2 }, Concurrency::concurrent_ordered(8))
+///     .filter_map(|x, _| async move { (x %2 == 0).then_some(x)}, Concurrency::concurrent_ordered(8))
+///     .map(|x, _| async move { x * 2 }, Concurrency::concurrent_ordered(8))
 ///     .backpressure(100)
-///     .map(|x| async move { x + 1 }, Concurrency::serial())
+///     .map(|x, _| async move { x + 1 }, Concurrency::serial())
 ///     .build();
 ///
 /// assert_eq!(output.recv().await, Some(5));
@@ -57,7 +57,7 @@ use crate::{
 ///
 /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
 /// let (mut output, h) = Pipeline::from_iter(vec![1, 2, 3])
-///     .map(|x| async move { panic!("oh no"); x }, Concurrency::concurrent_ordered(8))
+///     .map(|x, _| async move { panic!("oh no"); x }, Concurrency::concurrent_ordered(8))
 ///     .build();
 ///
 /// while let Some(output) = output.recv().await {
@@ -69,16 +69,25 @@ use crate::{
 /// assert!(res.is_err());
 /// # });
 /// ```
-pub struct Pipeline<Out> {
+pub struct Pipeline<Out, Ctx = ()>
+where
+    Out: Send + 'static,
+    Ctx: Clone + Send + 'static,
+{
     pub(crate) output_receiver: Receiver<Out>,
     handles: FuturesUnordered<JoinHandle<()>>,
+    context: Ctx,
 }
 
-impl<Out> From<Receiver<Out>> for Pipeline<Out> {
+impl<Out> From<Receiver<Out>> for Pipeline<Out>
+where
+    Out: Send + 'static,
+{
     fn from(receiver: Receiver<Out>) -> Self {
         Pipeline {
             output_receiver: receiver,
             handles: FuturesUnordered::new(),
+            context: (),
         }
     }
 }
@@ -103,6 +112,7 @@ where
         Pipeline {
             output_receiver,
             handles: [h].into_iter().collect(),
+            context: (),
         }
     }
 
@@ -128,14 +138,22 @@ where
         Pipeline {
             output_receiver,
             handles: [h].into_iter().collect(),
+            context: (),
         }
     }
+}
 
+impl<Out, Ctx> Pipeline<Out, Ctx>
+where
+    Out: Send + 'static,
+    Ctx: Clone + Send + 'static,
+{
     /// attach an additional `Pump` to the pipeline
     /// This method can be used to create custom `Pump` operations
     /// ```
-    pub fn pump<P, T>(self, pump: P) -> Pipeline<T>
+    pub fn pump<P, T>(self, pump: P) -> Pipeline<T, Ctx>
     where
+        T: Send + 'static,
         P: Pump<Out, T>,
     {
         let (pump_output_receiver, join_handle) = pump.spawn(self.output_receiver);
@@ -145,12 +163,97 @@ where
         Pipeline {
             output_receiver: pump_output_receiver,
             handles,
+            context: self.context,
         }
     }
 
+    /// Set this pipeline's context, which is passed to pipeline operations like [`Self::map`] and [`Self::filter_map`].
+    /// This is helps pass shared state to pumps without having to `.clone()` it manually.
+    ///
+    /// ## Notes
+    /// - `Ctx` will be cloned many times as this pipeline is built.
+    /// - `Ctx` will never be cloned as the pipeline runs, unless you do so manually.
+    /// - It may be wise to wrap your `Ctx` in an [`std::sync::Arc`].
+    /// - [`Self::with_context`] may be called many times. It resets the context each time it is called.
+    ///
+    /// # Example 1
+    ///
+    /// ```rust
+    /// use pumps::{Pipeline, Concurrency};
+    ///
+    /// #[derive(Clone)]
+    /// struct Config {
+    ///     multiplier: i32,
+    /// }
+    ///
+    /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
+    /// let config = Config { multiplier: 3 };
+    /// let (mut output, h) = Pipeline::from_iter(vec![1, 2, 3])
+    ///     .with_context(config)
+    ///     .map(|x, ctx| async move { x * ctx.multiplier }, Concurrency::serial())
+    ///     .build();
+    ///
+    /// assert_eq!(output.recv().await, Some(3));
+    /// assert_eq!(output.recv().await, Some(6));
+    /// assert_eq!(output.recv().await, Some(9));
+    /// assert_eq!(output.recv().await, None);
+    /// # });
+    /// ```
+    ///
+    /// # Example 2
+    ///
+    /// Context is particularly useful for sharing clients and connections:
+    /// ```rust
+    /// use pumps::{Pipeline, Concurrency};
+    /// use std::sync::Arc;
+    ///
+    /// #[derive(Clone)]
+    /// struct AppContext {
+    ///     db_pool: Arc<String>,
+    /// }
+    ///
+    /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
+    /// let ctx = AppContext {
+    ///     db_pool: Arc::new("connection_string".to_string()),
+    /// };
+    ///
+    /// let (mut output, h) = Pipeline::from_iter(vec!["user1", "user2"])
+    ///     .with_context(ctx)
+    ///     .map(|user_id, ctx| async move {
+    ///         // Fake query
+    ///         format!("User {} from {}", user_id, ctx.db_pool)
+    ///     }, Concurrency::concurrent_ordered(2))
+    ///     .build();
+    ///
+    /// assert_eq!(output.recv().await, Some("User user1 from connection_string".to_string()));
+    /// assert_eq!(output.recv().await, Some("User user2 from connection_string".to_string()));
+    /// assert_eq!(output.recv().await, None);
+    /// # });
+    /// ```
+    pub fn with_context<NewCtx>(self, ctx: NewCtx) -> Pipeline<Out, NewCtx>
+    where
+        NewCtx: Clone + Send + 'static,
+    {
+        Pipeline {
+            output_receiver: self.output_receiver,
+            handles: self.handles,
+            context: ctx,
+        }
+    }
+}
+
+impl<Out, Ctx> Pipeline<Out, Ctx>
+where
+    Out: Send + 'static,
+    Ctx: Clone + Send + 'static,
+{
     /// Apply the provided async map function on each item recieved from pipeline. The Future returned
     /// from the map function is executed concurrently according to the [Concurrency] configuration.
     /// The results of the executed futures is sent as output.
+    ///
+    /// The function given to [`Self::map`] takes two arguments:
+    /// - the first is the item to be processed
+    /// - the second is a clone of this pipeline's context, set by [`Self::with_context`]
     ///
     /// # Example
     /// ```rust
@@ -158,7 +261,7 @@ where
     ///
     /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
     /// let (mut output, h) = Pipeline::from_iter(vec![1, 2, 3])
-    ///     .map(|x| async move { x * 2 }, Concurrency::concurrent_ordered(8))
+    ///     .map(|x, _| async move { x * 2 }, Concurrency::concurrent_ordered(8))
     ///     .build();
     ///
     /// assert_eq!(output.recv().await, Some(2));
@@ -167,16 +270,18 @@ where
     /// assert_eq!(output.recv().await, None);
     /// # });
     /// ```
-    pub fn map<F, Fut, T>(self, map_fn: F, concurrency: Concurrency) -> Pipeline<T>
+    pub fn map<F, Fut, T>(self, map_fn: F, concurrency: Concurrency) -> Pipeline<T, Ctx>
     where
-        F: Fn(Out) -> Fut + Send + 'static,
+        F: Fn(Out, Ctx) -> Fut + Send + 'static,
         Fut: Future<Output = T> + Send + 'static,
         T: Send + 'static,
         Out: Send + 'static,
     {
+        let ctx = self.context.clone();
         self.pump(MapPump {
             map_fn,
             concurrency,
+            ctx,
         })
     }
 
@@ -185,32 +290,44 @@ where
     /// If the invocation results in None the triggering item will be removed from the pipeline, otherwise the result
     /// will be sent as output.
     ///
+    /// The function given to [`Self::filter_map`] takes two arguments:
+    /// - the first is the item to be processed
+    /// - the second is a clone of this pipeline's context, set by [`Self::with_context`]
+    ///
     /// # Example
     /// ```rust
     /// use pumps::{Pipeline, Concurrency};
     ///
     /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
     /// let (mut output, h) = Pipeline::from_iter(vec![1, 2, 3])
-    ///     .filter_map(|x| async move { (x % 2 == 0).then_some(x) }, Concurrency::concurrent_ordered(8))
+    ///     .filter_map(|x, _| async move { (x % 2 == 0).then_some(x) }, Concurrency::concurrent_ordered(8))
     ///     .build();
     ///
     /// assert_eq!(output.recv().await, Some(2));
     /// assert_eq!(output.recv().await, None);
     /// # });
     /// ```
-    pub fn filter_map<F, Fut, T>(self, map_fn: F, concurrency: Concurrency) -> Pipeline<T>
+    pub fn filter_map<F, Fut, T>(self, map_fn: F, concurrency: Concurrency) -> Pipeline<T, Ctx>
     where
-        F: FnMut(Out) -> Fut + Send + 'static,
+        F: FnMut(Out, Ctx) -> Fut + Send + 'static,
         Fut: Future<Output = Option<T>> + Send + 'static,
         T: Send + 'static,
         Out: Send + 'static,
     {
+        let ctx = self.context.clone();
         self.pump(FilterMapPump {
             map_fn,
             concurrency,
+            ctx,
         })
     }
+}
 
+impl<Out, Ctx> Pipeline<Out, Ctx>
+where
+    Ctx: Send + Clone + 'static,
+    Out: Send + 'static,
+{
     /// Transform each item in the pipeline into a tuple of the item and its index according to the arrival order.
     /// The index starts at 0.
     ///
@@ -228,7 +345,7 @@ where
     /// assert_eq!(output.recv().await, None);
     ///
     /// # });
-    pub fn enumerate(self) -> Pipeline<(usize, Out)> {
+    pub fn enumerate(self) -> Pipeline<(usize, Out), Ctx> {
         self.pump(crate::pumps::enumerate::EnumeratePump)
     }
 
@@ -249,7 +366,7 @@ where
     /// assert_eq!(output.recv().await, Some(vec![5]));
     /// assert_eq!(output.recv().await, None);
     /// # });
-    pub fn batch(self, n: usize) -> Pipeline<Vec<Out>> {
+    pub fn batch(self, n: usize) -> Pipeline<Vec<Out>, Ctx> {
         self.pump(crate::pumps::batch::BatchPump { n })
     }
 
@@ -276,7 +393,11 @@ where
     /// assert_eq!(output.recv().await, Some(vec![5]));
     /// assert_eq!(output.recv().await, None);
     /// # });
-    pub fn batch_while<F, State>(self, state_init: State, mut while_fn: F) -> Pipeline<Vec<Out>>
+    pub fn batch_while<F, State>(
+        self,
+        state_init: State,
+        mut while_fn: F,
+    ) -> Pipeline<Vec<Out>, Ctx>
     where
         F: FnMut(State, &Out) -> Option<State> + Send + 'static,
         State: Send + Clone + 'static,
@@ -340,7 +461,7 @@ where
         self,
         state_init: State,
         while_fn: F,
-    ) -> Pipeline<Vec<Out>>
+    ) -> Pipeline<Vec<Out>, Ctx>
     where
         F: FnMut(State, &Out) -> Option<(State, Fut)> + Send + 'static,
         Fut: Future<Output = ()> + Send,
@@ -355,27 +476,27 @@ where
     }
 
     /// Skip the first `n` items in the pipeline.
-    pub fn skip(self, n: usize) -> Pipeline<Out> {
+    pub fn skip(self, n: usize) -> Pipeline<Out, Ctx> {
         self.pump(crate::pumps::skip::SkipPump { n })
     }
 
     /// Take the first `n` items in the pipeline, removing the rest.
-    pub fn take(self, n: usize) -> Pipeline<Out> {
+    pub fn take(self, n: usize) -> Pipeline<Out, Ctx> {
         self.pump(crate::pumps::take::TakePump { n })
     }
 
     /// Apply backpressure by bufferring up to `n` items between the previous pump to the next one.
     /// When a downstream operation slows down, backpressure will allow some items to accumulate, tempreraly preventing upstream blocking.
-    ///     
+    ///
     /// # Example
     /// ```rust
     /// use pumps::{Pipeline, Concurrency};
     ///
-    /// # async fn mostly_fast_fn(x: i32) -> i32 {
+    /// # async fn mostly_fast_fn(x: i32, _ctx: ()) -> i32 {
     /// #   x
     /// # }
     /// #
-    /// # async fn sometimes_slow_fn(x: i32) -> i32 {
+    /// # async fn sometimes_slow_fn(x: i32, _ctx: ()) -> i32 {
     /// #    x
     /// # }
     ///
@@ -388,7 +509,7 @@ where
     ///     .map(sometimes_slow_fn, Concurrency::serial())
     ///     .build();
     /// # });
-    pub fn backpressure(self, n: usize) -> Pipeline<Out> {
+    pub fn backpressure(self, n: usize) -> Pipeline<Out, Ctx> {
         self.pump(crate::pumps::backpressure::Backpressure { n })
     }
 
@@ -396,7 +517,7 @@ where
     /// When `n` items are buffered, the relief valve will start dropping the oldest items, buffering only the most recent ones.
     /// When a downstream operation slows down, backpressure with relief valve will allow recent items to accumulate, preventing upstream blocking
     /// in the costs of dropped data.
-    pub fn backpressure_with_relief_valve(self, n: usize) -> Pipeline<Out> {
+    pub fn backpressure_with_relief_valve(self, n: usize) -> Pipeline<Out, Ctx> {
         self.pump(crate::pumps::backpressure_with_relief_valve::BackpressureWithReliefValve { n })
     }
 
@@ -424,8 +545,9 @@ where
     }
 }
 
-impl<Out> Pipeline<Pipeline<Out>>
+impl<Out, Ctx> Pipeline<Pipeline<Out>, Ctx>
 where
+    Ctx: Send + Clone + 'static,
     Out: Send + Sync + 'static,
 {
     /// Given a pipeline of pipelines, flatten it into a single pipeline.
@@ -447,12 +569,17 @@ where
     /// assert_eq!(output.recv().await, None);
     /// # });
     /// ```
-    pub fn flatten(self, concurrency: FlattenConcurrency) -> Pipeline<Out> {
+    pub fn flatten(self, concurrency: FlattenConcurrency) -> Pipeline<Out, Ctx> {
         self.pump(FlattenPump { concurrency })
     }
 }
 
-impl<OutOk, OutErr> Pipeline<Result<OutOk, OutErr>> {
+impl<OutOk, OutErr, Ctx> Pipeline<Result<OutOk, OutErr>, Ctx>
+where
+    Ctx: Send + Clone + 'static,
+    OutOk: Send + 'static,
+    OutErr: Send + 'static,
+{
     /// applies a function to the success value for each item in a [Pipeline] of `Results<T, E>`
     ///
     /// # Example
@@ -474,7 +601,7 @@ impl<OutOk, OutErr> Pipeline<Result<OutOk, OutErr>> {
         self,
         map_fn: F,
         concurrency: Concurrency,
-    ) -> Pipeline<Result<T, OutErr>>
+    ) -> Pipeline<Result<T, OutErr>, Ctx>
     where
         F: Fn(OutOk) -> Fut + Send + 'static,
         Fut: Future<Output = T> + Send,
@@ -509,7 +636,7 @@ impl<OutOk, OutErr> Pipeline<Result<OutOk, OutErr>> {
         self,
         map_fn: F,
         concurrency: Concurrency,
-    ) -> Pipeline<Result<OutOk, T>>
+    ) -> Pipeline<Result<OutOk, T>, Ctx>
     where
         F: Fn(OutErr) -> Fut + Send + 'static,
         Fut: Future<Output = T> + Send,
@@ -530,11 +657,11 @@ mod tests {
 
     use super::*;
 
-    async fn async_job(x: i32) -> i32 {
+    async fn async_job(x: i32, _ctx: ()) -> i32 {
         x
     }
 
-    async fn async_filter_map(x: i32) -> Option<i32> {
+    async fn async_filter_map(x: i32, _ctx: ()) -> Option<i32> {
         if x % 2 == 0 {
             Some(x)
         } else {
@@ -575,7 +702,7 @@ mod tests {
             .map(async_job, Concurrency::concurrent_unordered(2))
             .backpressure(100)
             .map(
-                |x| async move {
+                |x, _| async move {
                     if x == 2 {
                         panic!("2 is not supported");
                     }
