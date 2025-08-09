@@ -6,7 +6,7 @@ pub struct CatchPump<E>
 where
     E: Send + 'static,
 {
-    pub(crate) channel: tokio::sync::mpsc::Sender<E>,
+    pub(crate) err_channel: tokio::sync::mpsc::Sender<E>,
     pub(crate) abort_on_error: bool,
 }
 
@@ -24,7 +24,7 @@ where
                     Err(e) => {
                         // Ignore send errors, we should not stop the
                         // flow of data if the error catcher closes
-                        let _ = self.channel.send(e).await;
+                        let _ = self.err_channel.send(e).await;
 
                         if self.abort_on_error {
                             break;
@@ -34,9 +34,10 @@ where
                     Ok(x) => {
                         if let Err(_) = output_tx.send(x).await {
                             // Collect remaining errors
+                            input_rx.close();
                             while let Ok(x) = input_rx.try_recv() {
                                 if let Err(x) = x {
-                                    let _ = self.channel.send(x).await;
+                                    let _ = self.err_channel.send(x).await;
 
                                     // Only send one error if `abort_on_error` is true
                                     if self.abort_on_error {
@@ -67,7 +68,7 @@ mod tests {
         let (error_tx, mut error_rx) = mpsc::channel::<()>(10);
 
         let catch_pump = CatchPump {
-            channel: error_tx,
+            err_channel: error_tx,
             abort_on_error: false,
         };
 
@@ -93,7 +94,7 @@ mod tests {
         let (error_tx, mut error_rx) = mpsc::channel(10);
 
         let catch_pump = CatchPump {
-            channel: error_tx,
+            err_channel: error_tx,
             abort_on_error: false,
         };
 
@@ -122,7 +123,7 @@ mod tests {
         let (error_tx, mut error_rx) = mpsc::channel(10);
 
         let catch_pump = CatchPump {
-            channel: error_tx,
+            err_channel: error_tx,
             abort_on_error: true,
         };
 
@@ -148,7 +149,7 @@ mod tests {
         let (error_tx, mut error_rx) = mpsc::channel::<()>(10);
 
         let catch_pump = CatchPump {
-            channel: error_tx,
+            err_channel: error_tx,
             abort_on_error: false,
         };
 
@@ -168,7 +169,7 @@ mod tests {
         let (error_tx, mut error_rx) = mpsc::channel(10);
 
         let catch_pump = CatchPump {
-            channel: error_tx,
+            err_channel: error_tx,
             abort_on_error: false,
         };
 
@@ -193,7 +194,7 @@ mod tests {
         let (error_tx, mut error_rx) = mpsc::channel(10);
 
         let catch_pump = CatchPump {
-            channel: error_tx,
+            err_channel: error_tx,
             abort_on_error: true,
         };
 

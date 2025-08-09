@@ -465,9 +465,9 @@ where
     /// assert_eq!(error_rx.try_recv().unwrap_err(), mpsc::error::TryRecvError::Disconnected);
     /// # });
     /// ```
-    pub fn catch(self, channel: tokio::sync::mpsc::Sender<Err>) -> Pipeline<Out> {
+    pub fn catch(self, err_channel: tokio::sync::mpsc::Sender<Err>) -> Pipeline<Out> {
         self.pump(CatchPump {
-            channel,
+            err_channel,
             abort_on_error: false,
         })
     }
@@ -476,9 +476,9 @@ where
     ///
     /// This behaves exactly like [`Self::catch`], but processes no items after
     /// encountering an [`Err`]. This pump will send at most one error to `channel`.
-    pub fn catch_abort(self, channel: tokio::sync::mpsc::Sender<Err>) -> Pipeline<Out> {
+    pub fn catch_abort(self, err_channel: tokio::sync::mpsc::Sender<Err>) -> Pipeline<Out> {
         self.pump(CatchPump {
-            channel,
+            err_channel,
             abort_on_error: true,
         })
     }
