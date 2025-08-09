@@ -15,6 +15,7 @@ use crate::{
     pumps::{
         filter_map::FilterMapPump,
         flatten::{FlattenConcurrency, FlattenPump},
+        flatten_iter::FlattenIterPump,
         map::MapPump,
         map_err::MapErrPump,
         map_ok::MapOkPump,
@@ -449,6 +450,35 @@ where
     /// ```
     pub fn flatten(self, concurrency: FlattenConcurrency) -> Pipeline<Out> {
         self.pump(FlattenPump { concurrency })
+    }
+}
+
+impl<Out, In: IntoIterator<Item = Out>> Pipeline<In>
+where
+    In: Send + 'static,
+    Out: Send + Sync + 'static,
+    <In as IntoIterator>::IntoIter: Send,
+{
+    /// Given a pipeline of iterators, flatten it into a pipeline of those iterators' items.
+    ///
+    /// # Example
+    /// ```rust
+    /// use pumps::Pipeline;
+    ///
+    /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
+    /// let (mut output, h) = Pipeline::from_iter(vec![[1, 2], [3, 4]])
+    ///     .flatten_iter()
+    ///     .build();
+    ///
+    /// assert_eq!(output.recv().await, Some(1));
+    /// assert_eq!(output.recv().await, Some(2));
+    /// assert_eq!(output.recv().await, Some(3));
+    /// assert_eq!(output.recv().await, Some(4));
+    /// assert_eq!(output.recv().await, None);
+    /// # });
+    /// ```
+    pub fn flatten_iter(self) -> Pipeline<Out> {
+        self.pump(FlattenIterPump {})
     }
 }
 
