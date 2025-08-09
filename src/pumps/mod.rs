@@ -5,6 +5,7 @@ pub(crate) mod batch_while_with_expiry;
 pub(crate) mod enumerate;
 pub(crate) mod filter_map;
 pub(crate) mod flatten;
+pub(crate) mod flatten_iter;
 pub(crate) mod map;
 pub(crate) mod map_err;
 pub(crate) mod map_ok;
