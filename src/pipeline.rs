@@ -367,7 +367,7 @@ where
 
     /// Apply backpressure by bufferring up to `n` items between the previous pump to the next one.
     /// When a downstream operation slows down, backpressure will allow some items to accumulate, tempreraly preventing upstream blocking.
-    ///     
+    ///
     /// # Example
     /// ```rust
     /// use pumps::{Pipeline, Concurrency};
@@ -435,9 +435,10 @@ where
     /// The pipeline will continue processing subsequent items, even after encountering an error.
     ///
     /// # Notes
-    /// - Dropping `error_rx` will not stop the pipeline. If we cannot send an error, we ignore it and continue.
-    /// - If the output channel of this pipeline is dropped, we send all errors in the input pipeline to `channel`.
+    /// - Dropping `error_rx` will not stop the pipeline. If the error channel is closed, we ignore all errors.
+    /// - The pipeline will be blocked if `error_rx` is full.
     ///
+    /// # Example
     /// ```rust
     /// use pumps::Pipeline;
     /// use tokio::sync::mpsc;
@@ -457,14 +458,60 @@ where
     ///
     /// assert_eq!(output.recv().await, Some(1));
     /// assert_eq!(output.recv().await, Some(2));
+    /// assert_eq!(error_rx.recv().await, Some("first error"));
+    /// assert_eq!(error_rx.recv().await, Some("second error"));
     /// assert_eq!(output.recv().await, Some(3));
     /// assert_eq!(output.recv().await, None);
     ///
-    /// assert_eq!(error_rx.recv().await, Some("first error"));
-    /// assert_eq!(error_rx.recv().await, Some("second error"));
     /// assert_eq!(error_rx.try_recv().unwrap_err(), mpsc::error::TryRecvError::Disconnected);
     /// # });
     /// ```
+    ///
+    /// # Dropped senders
+    /// [`Self::catch`] will receive all errors, even those that were not processed
+    /// before the output channel of this pipeline was dropped.
+    /// Consider the following example:
+    ///
+    /// ```rust
+    /// use pumps::Pipeline;
+    /// use tokio::sync::mpsc;
+    /// use std::time::Duration;
+    ///
+    /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
+    /// let (input_tx, mut input_rx) = mpsc::channel(10);
+    /// let (error_tx, mut error_rx) = mpsc::channel(10);
+    ///
+    /// let (mut output_rx, h) = Pipeline::from(input_rx)
+    ///     .catch(error_tx)
+    ///     .build();
+    ///
+    /// input_tx.send(Err("error 1")).await;
+    /// input_tx.send(Ok(1)).await;
+    /// input_tx.send(Ok(2)).await;
+    /// input_tx.send(Ok(3)).await;
+    /// input_tx.send(Err("error 2")).await;
+    ///
+    /// // Works as normal
+    /// assert_eq!(output_rx.recv().await, Some(1));
+    ///
+    /// // Output is dropped, `Ok(2)` and `Ok(3)` are now inaccessible
+    /// output_rx.close();
+    ///
+    /// // Give the pipeline time to catch up
+    /// // Without this, the `input_tx.is_closed()` assert fails,
+    /// // since the pipeline task hasn't had time to close its input channel
+    /// tokio::time::sleep(Duration::from_secs(1)).await;
+    ///
+    /// // New input will not be accepted...
+    /// assert!(input_tx.is_closed());
+    ///
+    /// // But queued errors are still available!
+    /// assert_eq!(error_rx.recv().await, Some("error 1"));
+    /// assert_eq!(error_rx.recv().await, Some("error 2"));
+    /// assert_eq!(error_rx.try_recv().unwrap_err(), mpsc::error::TryRecvError::Disconnected);
+    /// # });
+    /// ```
+    ///
     pub fn catch(self, err_channel: tokio::sync::mpsc::Sender<Err>) -> Pipeline<Out> {
         self.pump(CatchPump {
             err_channel,

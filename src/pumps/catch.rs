@@ -20,10 +20,15 @@ where
 
         let h = tokio::spawn(async move {
             while let Some(input) = input_rx.recv().await {
+                // Close the input receiver, but don't break yet.
+                // We need to drain input_rx to find any queued errors.
+                if output_tx.is_closed() {
+                    input_rx.close();
+                }
                 match input {
                     Err(e) => {
                         // Ignore send errors, we should not stop the
-                        // flow of data if the error catcher closes
+                        // flow of data if the error channel is closed.
                         let _ = self.err_channel.send(e).await;
 
                         if self.abort_on_error {
@@ -31,23 +36,9 @@ where
                         }
                     }
 
-                    Ok(x) => {
-                        if let Err(_) = output_tx.send(x).await {
-                            // Collect remaining errors
-                            input_rx.close();
-                            while let Ok(x) = input_rx.try_recv() {
-                                if let Err(x) = x {
-                                    let _ = self.err_channel.send(x).await;
-
-                                    // Only send one error if `abort_on_error` is true
-                                    if self.abort_on_error {
-                                        break;
-                                    }
-                                }
-                            }
-
-                            break;
-                        }
+                    Ok(value) => {
+                        // Don't break yet, we need to drain input_rx to find any queued errors.
+                        let _ = output_tx.send(value).await;
                     }
                 }
             }
