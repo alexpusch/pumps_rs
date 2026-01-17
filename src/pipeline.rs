@@ -13,6 +13,7 @@ use tokio::{
 use crate::{
     concurrency::Concurrency,
     pumps::{
+        and_then::AndThenPump,
         catch::CatchPump,
         filter_map::FilterMapPump,
         flatten::{FlattenConcurrency, FlattenPump},
@@ -655,6 +656,42 @@ impl<OutOk, OutErr> Pipeline<Result<OutOk, OutErr>> {
         OutOk: Send + 'static,
     {
         self.pump(MapErrPump {
+            map_fn,
+            concurrency,
+        })
+    }
+
+    /// Applies the provided async function to the success value for each item in a [Pipeline] of `Results<T, E>`.
+    /// The function returns a `Result` which will be the new output.
+    ///
+    /// # Example
+    /// ```rust
+    /// use pumps::{Pipeline, Concurrency};
+    ///
+    /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
+    /// let (mut output, h) = Pipeline::from_iter(vec![Ok(1), Err("error"), Ok(2)])
+    ///     .and_then(|x| async move { Ok(x * 2) }, Concurrency::serial())
+    ///     .build();
+    ///
+    /// assert_eq!(output.recv().await, Some(Ok(2)));
+    /// assert_eq!(output.recv().await, Some(Err("error")));
+    /// assert_eq!(output.recv().await, Some(Ok(4)));
+    /// assert_eq!(output.recv().await, None);
+    /// # });
+    /// ```
+    pub fn and_then<F, Fut, T>(
+        self,
+        map_fn: F,
+        concurrency: Concurrency,
+    ) -> Pipeline<Result<T, OutErr>>
+    where
+        F: Fn(OutOk) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<T, OutErr>> + Send,
+        T: Send + 'static,
+        OutErr: Send + 'static,
+        OutOk: Send + 'static,
+    {
+        self.pump(AndThenPump {
             map_fn,
             concurrency,
         })
