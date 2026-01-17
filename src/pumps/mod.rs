@@ -14,3 +14,4 @@ pub(crate) mod map_ok;
 pub(crate) mod pump;
 pub(crate) mod skip;
 pub(crate) mod take;
+pub(crate) mod try_filter_map;

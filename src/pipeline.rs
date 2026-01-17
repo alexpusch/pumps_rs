@@ -21,6 +21,7 @@ use crate::{
         map::MapPump,
         map_err::MapErrPump,
         map_ok::MapOkPump,
+        try_filter_map::TryFilterMapPump,
     },
     Pump,
 };
@@ -692,6 +693,54 @@ impl<OutOk, OutErr> Pipeline<Result<OutOk, OutErr>> {
         OutOk: Send + 'static,
     {
         self.pump(AndThenPump {
+            map_fn,
+            concurrency,
+        })
+    }
+
+    /// Apply the provided async filter map function on the success value for each item in a [Pipeline] of `Results<T, E>`.
+    /// The Future returned from the filter map function is executed concurrently according to the [Concurrency] configuration.
+    /// If the invocation results in `Ok(None)`, the triggering item will be removed from the pipeline.
+    /// If the invocation results in `Ok(Some(val))`, the result will be sent as output.
+    /// If the invocation results in `Err(e)` or the input was `Err(e)`, the error will be sent as output.
+    ///
+    /// # Example
+    /// ```rust
+    /// use pumps::{Pipeline, Concurrency};
+    ///
+    /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
+    /// let (mut output, h) = Pipeline::from_iter(vec![Ok(1), Ok(2), Ok(3), Err("input error")])
+    ///     .try_filter_map(|x| async move {
+    ///         if x % 2 == 0 {
+    ///             Ok(Some(x * 2))
+    ///         } else if x % 3 == 0 {
+    ///             Ok(None)
+    ///         } else {
+    ///             Err("odd and not divisible by 3")
+    ///         }
+    ///     }, Concurrency::serial())
+    ///     .build();
+    ///
+    /// assert_eq!(output.recv().await, Some(Err("odd and not divisible by 3"))); // 1 -> Err
+    /// assert_eq!(output.recv().await, Some(Ok(4))); // 2 -> Ok(4)
+    /// // 3 -> None (filtered)
+    /// assert_eq!(output.recv().await, Some(Err("input error"))); // input error -> Err
+    /// assert_eq!(output.recv().await, None);
+    /// # });
+    /// ```
+    pub fn try_filter_map<F, Fut, T>(
+        self,
+        map_fn: F,
+        concurrency: Concurrency,
+    ) -> Pipeline<Result<T, OutErr>>
+    where
+        F: FnMut(OutOk) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<Option<T>, OutErr>> + Send,
+        T: Send + 'static,
+        OutErr: Send + 'static,
+        OutOk: Send + 'static,
+    {
+        self.pump(TryFilterMapPump {
             map_fn,
             concurrency,
         })
