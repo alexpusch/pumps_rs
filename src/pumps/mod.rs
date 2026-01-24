@@ -1,3 +1,4 @@
+pub(crate) mod and_then;
 pub(crate) mod backpressure;
 pub(crate) mod backpressure_with_relief_valve;
 pub(crate) mod batch;
@@ -13,3 +14,4 @@ pub(crate) mod map_ok;
 pub(crate) mod pump;
 pub(crate) mod skip;
 pub(crate) mod take;
+pub(crate) mod try_filter_map;
